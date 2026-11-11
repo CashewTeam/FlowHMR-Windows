@@ -40,10 +40,14 @@ def _pose(value):
         angles = triple(rotations.get(key), 180)
         if any(angles):
             normalized[key] = angles
-    return {"rotations": normalized, "mirror": value.get("mirror") is True,
+    pose = {"rotations": normalized, "mirror": value.get("mirror") is True,
             "ikMode": "ik" if value.get("ikMode") == "ik" else "fk",
             "rootRotation": triple(value.get("rootRotation"), 180),
             "rootTranslation": triple(value.get("rootTranslation"), 5)}
+    baseline = value.get("pmxBaselineVersion")
+    if type(baseline) is int and baseline == 1:
+        pose["pmxBaselineVersion"] = baseline
+    return pose
 
 
 class CharacterLibrary:

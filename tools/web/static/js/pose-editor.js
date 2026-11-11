@@ -236,7 +236,7 @@ export function initPoseEditor(onChange, onActor) {
     save();
   });
   $("poseResetAll").addEventListener("click", () => {
-    values = normalizePoseOffsets({ mirror: values.mirror, ikMode: values.ikMode });
+    values = normalizePoseOffsets({ ...values, rotations: {}, rootRotation: null, rootTranslation: null });
     save();
   });
   for (const [button, mode] of [[fkMode, "fk"], [ikMode, "ik"]]) button.addEventListener("click", () => {

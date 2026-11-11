@@ -2,6 +2,7 @@ import { Euler, Quaternion, Vector3 } from "three";
 
 export const ROTATION_LIMIT = 180;
 export const TRANSLATION_LIMIT = 5;
+export const PMX_BASELINE_VERSION = 1;
 const DEG = Math.PI / 180;
 const HEAD_JOINT = 15;
 const HEAD_X_BASE = -15;
@@ -19,9 +20,11 @@ export function normalizePoseOffsets(settings) {
     const value = triple(settings?.rotations?.[i], ROTATION_LIMIT);
     if (nonzero(value)) rotations[i] = value;
   }
-  return { rotations, mirror: settings?.mirror === true, ikMode: settings?.ikMode === "ik" ? "ik" : "fk",
+  const pose = { rotations, mirror: settings?.mirror === true, ikMode: settings?.ikMode === "ik" ? "ik" : "fk",
     rootRotation: triple(settings?.rootRotation, ROTATION_LIMIT),
     rootTranslation: triple(settings?.rootTranslation, TRANSLATION_LIMIT) };
+  if (settings?.pmxBaselineVersion === PMX_BASELINE_VERSION) pose.pmxBaselineVersion = PMX_BASELINE_VERSION;
+  return pose;
 }
 
 export function readStoredPose(key) {
@@ -29,6 +32,7 @@ export function readStoredPose(key) {
     const saved = JSON.parse(localStorage.getItem(key));
     if (!saved) return null;
     const pose = normalizePoseOffsets(saved);
+    if (saved.ikMode !== "ik" && saved.ikMode !== "fk") delete pose.ikMode;
     if (saved.version == null && pose.rotations[HEAD_JOINT]) {
       // Older previews used the slider to compensate for the uncorrected head.
       const head = pose.rotations[HEAD_JOINT];

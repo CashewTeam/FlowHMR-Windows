@@ -2,11 +2,13 @@ import { Matrix4, Quaternion, Vector3 } from "three";
 import { canWriteVmdBoneName } from "./pmx-vmd.js";
 import { makeHandPairFit } from "./pmx-hand-fit.js";
 import { makePmxNativeIk } from "./pmx-native-ik.js";
-import { makePoseOffsets } from "./pose-offsets.js";
+import { makePoseOffsets, normalizePoseOffsets, PMX_BASELINE_VERSION } from "./pose-offsets.js";
 
 const JOINTS = 52;
 const UP = new Vector3(0, 1, 0);
 const EPSILON = 1e-8;
+const ZERO_ANGLES = [0, 0, 0];
+const wrapAngle = (value) => Math.abs(value) <= 180 ? value : (value + 540) % 360 - 180;
 const key = (name = "") => name.normalize("NFKC").toLowerCase().replace(/[\s_.:\-]/g, "");
 const vector = (data) => new Vector3().fromArray(data);
 const quaternion = (data) => new Quaternion().fromArray(data).normalize();
@@ -380,7 +382,13 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
   const bindPosition = originalRest.map((p) => p.clone().sub(meshPosition).applyQuaternion(align).add(meshPosition));
   const bindRotation = originalRotation.map((q) => align.clone().multiply(q).normalize());
   const edits = makePoseOffsets((j) => bindRotation[map[j]], source[16].clone().sub(source[17]).setY(0));
-  edits.set(poseOffsets);
+  // Keep the sliders relative to the PMX fitting pose. Reflect in each model's
+  // bind axes, just as the interactive mirror control does.
+  const shoulderDefaults = { 13: [0, 0, 15], 16: [0, 0, -15] };
+  shoulderDefaults[14] = edits.mirrorRotation(13, 14, shoulderDefaults[13]) ?? [0, 0, -15];
+  shoulderDefaults[17] = edits.mirrorRotation(16, 17, shoulderDefaults[16]) ?? [0, 0, 15];
+  const shoulderAngles = (joint, angles, direction = 1) => shoulderDefaults[joint]
+    ? angles.map((angle, axis) => wrapAngle(angle + direction * shoulderDefaults[joint][axis])) : angles;
   const restLocal = bones.map((b) => quaternion(b.quaternion));
   const invRestLocal = restLocal.map((q) => q.clone().invert());
   const localPosition = bones.map((b) => vector(b.position));
@@ -437,7 +445,8 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
   const skin = mesh.skeleton.bones;
   const root = vmdRoot(bones, map, parents, grants);
   const nativeIk = makePmxNativeIk(mesh, bones, parents, bodyAncestors, root, nameCounts);
-  let ikMode = poseOffsets?.ikMode === "ik" && nativeIk.available;
+  let ikMode;
+  setPoseOffsets(poseOffsets);
   const localInverse = new Quaternion();
 
   const toes = [7, 8, 10, 11];
@@ -1135,10 +1144,33 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
   }
 
   function setPoseOffsets(settings) {
-    edits.set(settings);
-    ikMode = settings?.ikMode === "ik" && nativeIk.available;
+    const pose = normalizePoseOffsets(settings);
+    pose.ikMode = nativeIk.available && settings?.ikMode !== "fk" ? "ik" : "fk";
+    if (pose.pmxBaselineVersion !== PMX_BASELINE_VERSION) {
+      for (const joint of Object.keys(shoulderDefaults)) {
+        const saved = pose.rotations[joint];
+        if (!saved) continue;
+        // Preserve old manual fits, converting their absolute values to
+        // offsets from the new default. Previously untouched joints use it.
+        const relative = shoulderAngles(joint, saved, -1);
+        if (relative.some((angle) => Math.abs(angle) > 1e-8)) pose.rotations[joint] = relative;
+        else delete pose.rotations[joint];
+      }
+    }
+    pose.pmxBaselineVersion = PMX_BASELINE_VERSION;
+    const rotations = { ...pose.rotations };
+    for (const joint of Object.keys(shoulderDefaults)) {
+      rotations[joint] = shoulderAngles(joint, rotations[joint] ?? ZERO_ANGLES);
+    }
+    edits.set({ ...pose, rotations });
+    ikMode = pose.ikMode === "ik";
+    return pose;
   }
-  return { apply, vmd, setPoseOffsets, nativeIkAvailable: nativeIk.available, mirrorRotation: edits.mirrorRotation, matched: map.filter((i) => i >= 0).length,
+  function mirrorRotation(from, to, angles) {
+    const mirrored = edits.mirrorRotation(from, to, shoulderAngles(from, angles));
+    return mirrored && shoulderAngles(to, mirrored, -1).map((angle) => Number(angle.toFixed(2)));
+  }
+  return { apply, vmd, setPoseOffsets, nativeIkAvailable: nativeIk.available, mirrorRotation, matched: map.filter((i) => i >= 0).length,
     sourceToTarget: Array.from(map), skippedGrants, support };
 }
 

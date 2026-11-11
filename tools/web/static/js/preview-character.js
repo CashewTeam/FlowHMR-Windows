@@ -189,6 +189,10 @@ export function initPreviewCharacter(getActors, onChange, onRestoreError) {
     return next;
   }
   function applyPose(entry, offsets) {
+    if (entry.asset.kind !== "fbx") {
+      entry.poseOffsets = entry.rig.setPoseOffsets(offsets);
+      return;
+    }
     entry.poseOffsets = normalizePoseOffsets(offsets);
     entry.rig.setPoseOffsets(entry.poseOffsets);
   }
