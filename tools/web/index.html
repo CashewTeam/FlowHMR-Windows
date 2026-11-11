@@ -425,8 +425,13 @@
     <input type="text" class="input" id="modelDirectory" aria-label="模型文件夹路径" placeholder="正在读取路径…" readonly data-i18n-label="models.directory" data-i18n-placeholder="models.directory_reading">
     <button type="button" class="btn-secondary small" id="modelOpenFolder" disabled data-i18n="common.open_folder">打开文件夹</button>
   </div>
-  <p class="model-guide" id="modelImportGuide" data-i18n="models.guide">公开模型可单独或一键全部下载。导入已解压的文件夹时，程序会识别官方 SMPL-H、MANO 和支持的公开模型，并复制到正确位置。</p>
+  <p class="model-guide hidden" id="modelImportGuide" data-i18n="models.guide">公开模型可单独或一键全部下载。导入时，程序会识别官方 SMPL-H、MANO 和支持的公开模型，并复制到正确位置。</p>
   <p class="model-guide hidden" id="modelManualGuide" data-i18n="models.manual_guide"></p>
+  <div id="modelImportActions" class="model-import-actions hidden">
+    <button type="button" class="btn-primary small hidden" id="modelImportArchive" data-i18n="models.import_archive" data-i18n-title="models.import_archive_hint">导入模型压缩包…</button>
+    <button type="button" class="btn-secondary small hidden" id="modelImportFolder" data-i18n="models.import" data-i18n-title="models.import_hint">导入已解压文件夹…</button>
+    <span id="modelImportFormats" class="model-import-formats hidden" data-i18n="models.import_archive_formats">支持 ZIP、TAR.XZ、TAR.GZ、TAR</span>
+  </div>
   <div id="modelList" class="model-list"></div>
   <div id="modelTransfer" class="model-transfer hidden">
     <p id="modelTransferLabel"></p>
@@ -442,7 +447,6 @@
   <footer class="model-dialog-foot">
     <span id="modelCheckStatus" role="status"></span>
     <div class="model-actions">
-      <button type="button" class="btn-secondary small hidden" id="modelImportFolder" data-i18n="models.import" data-i18n-title="models.import_hint">导入已解压文件夹…</button>
       <button type="button" class="btn-secondary small" id="modelRefresh" data-i18n="common.refresh">刷新</button>
       <button type="button" class="btn-secondary small" id="modelVerify" title="逐字节校验已下载模型的 SHA-256；首次较慢，之后使用缓存。" data-i18n-title="models.hash_hint" data-i18n="models.verify">校验哈希</button>
       <button type="button" class="btn-primary small hidden" id="modelDownload" data-i18n="models.download_all">下载全部公开模型</button>

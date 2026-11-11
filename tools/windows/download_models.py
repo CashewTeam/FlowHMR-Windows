@@ -111,7 +111,7 @@ def main():
     if files.smplh_reference() is None:
         entry, archive = sources.MANO_DOWNLOAD
         print(f"SMPL-H: sign in at {sources.MANO_URL} and download '{entry}' ({archive}).\n"
-              f"Extract into {files.MODEL_ROOT} or import the extracted folder in the desktop app.\n"
+              f"Import the archive in the desktop app or extract into {files.MODEL_ROOT}.\n"
               "An installed male or female body is sufficient. Extended SMPL+H neutral is optional.", flush=True)
     if failures:
         print("Unfinished downloads: " + ", ".join(failures), flush=True)

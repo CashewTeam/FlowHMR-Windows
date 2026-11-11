@@ -1,9 +1,13 @@
 import hashlib
+from io import BytesIO
 from pathlib import Path
+import stat
+import tarfile
 from tempfile import TemporaryDirectory
 from time import monotonic, sleep
 import unittest
 from unittest.mock import patch
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from flowhmr import model_files as files, model_import, model_sources
 
@@ -25,8 +29,8 @@ class ModelImportTests(unittest.TestCase):
         assets.start()
         self.addCleanup(assets.stop)
 
-    def run_import(self, source=None):
-        response = self.installer.start(str(source or self.source))
+    def run_import(self, source=None, *, kind="folder"):
+        response = self.installer.start(str(source or self.source), kind=kind)
         self.assertEqual(response["state"], "running")
         deadline = monotonic() + 5
         while self.installer.active and monotonic() < deadline:
@@ -137,6 +141,130 @@ class ModelImportTests(unittest.TestCase):
         self.assertEqual(report["error_code"], "extract_smplh_tar")
         self.assertFalse(report["groups"])
         self.assertFalse(self.installer.root.exists())
+
+    def test_zip_installs_only_recognized_content_and_keeps_archive(self):
+        bundle = self.source / "模型.ZIP"
+        with ZipFile(bundle, "w", compression=ZIP_DEFLATED) as archive:
+            archive.writestr("models/" + self.relative, self.content)
+            archive.writestr("notes/readme.txt", "Unrelated archive file")
+        before = bundle.read_bytes()
+        report = self.run_import(bundle, kind="archive")
+        self.assertEqual(report["groups"], ["joint-regressor"])
+        self.assertEqual(report["results"], [{"file": self.relative, "status": "installed"}])
+        self.assertEqual(report["bytes_done"], len(self.content))
+        self.assertEqual(bundle.read_bytes(), before)
+        self.assertEqual(self.destination.read_bytes(), self.content)
+        self.assertFalse(list(self.installer.root.rglob("readme.txt")))
+        self.assertFalse((self.installer.root / model_import._ARCHIVE_STAGE).exists())
+
+        report = self.run_import(bundle, kind="archive")
+        self.assertEqual(report["results"][0]["code"], "already_installed")
+
+    def test_tar_gzip_imports_only_the_official_hamer_members(self):
+        bundle = self.source / "hamer_demo_data.tar.gz"
+        contents = {}
+        assets = {}
+        with tarfile.open(bundle, "w:gz") as archive:
+            for member, asset in model_sources.HAMER_MEMBERS.items():
+                data = f"Fixture for {member}\n".encode()
+                contents[asset.relative] = data
+                assets[asset.relative] = model_sources.Asset(asset.relative, len(data), hashlib.sha256(data).hexdigest())
+                self.add_tar(archive, "./" + member, data)
+            self.add_tar(archive, "./_DATA/demo/image.png", b"not needed")
+        with patch.dict(model_import._ASSETS, assets):
+            report = self.run_import(bundle, kind="archive")
+        self.assertEqual(report["groups"], ["hamer"])
+        self.assertEqual(report["bytes_done"], bundle.stat().st_size)
+        self.assertEqual({result["file"]: result["status"] for result in report["results"]},
+                         {relative: "installed" for relative in contents})
+        for relative, data in contents.items():
+            self.assertEqual((self.installer.root / relative).read_bytes(), data)
+        self.assertFalse(list(self.installer.root.rglob("image.png")))
+
+    @staticmethod
+    def add_tar(archive, path, data):
+        member = tarfile.TarInfo(path)
+        member.size = len(data)
+        archive.addfile(member, BytesIO(data))
+
+    def assert_rejected_archive(self, bundle, error_code):
+        report = self.run_import(bundle, kind="archive")
+        self.assertEqual(report["state"], "failed")
+        self.assertEqual(report["error_code"], error_code)
+        self.assertFalse(self.destination.exists())
+        self.assertFalse((self.installer.root / model_import._ARCHIVE_STAGE).exists())
+
+    def test_tar_traversal_discards_earlier_staged_model(self):
+        bundle = self.source / "unsafe.tar.xz"
+        with tarfile.open(bundle, "w:xz") as archive:
+            self.add_tar(archive, self.relative, self.content)
+            self.add_tar(archive, "../outside.txt", b"Must not be extracted")
+        self.assert_rejected_archive(bundle, "archive_unsafe")
+        self.assertFalse((self.root / "outside.txt").exists())
+
+    def test_zip_rejects_symbolic_and_reparse_entries(self):
+        for name, attributes, system in (
+                ("symlink", (stat.S_IFLNK | 0o777) << 16, 3),
+                ("reparse", stat.FILE_ATTRIBUTE_REPARSE_POINT, 0)):
+            with self.subTest(kind=name):
+                bundle = self.source / f"{name}.zip"
+                with ZipFile(bundle, "w") as archive:
+                    archive.writestr(self.relative, self.content)
+                    entry = ZipInfo("ignored")
+                    entry.create_system, entry.external_attr = system, attributes
+                    archive.writestr(entry, "../outside")
+                self.assert_rejected_archive(bundle, "archive_unsafe")
+
+    def test_tar_rejects_hard_link(self):
+        bundle = self.source / "link.tar"
+        with tarfile.open(bundle, "w") as archive:
+            self.add_tar(archive, self.relative, self.content)
+            member = tarfile.TarInfo("ignored-link")
+            member.type = tarfile.LNKTYPE
+            member.linkname = self.relative
+            archive.addfile(member)
+        self.assert_rejected_archive(bundle, "archive_unsafe")
+
+    def test_zip_rejects_duplicate_destinations_and_case_aliases(self):
+        for second in ("elsewhere/" + self.source_name, self.relative.upper()):
+            with self.subTest(path=second):
+                bundle = self.source / "duplicate.zip"
+                with ZipFile(bundle, "w") as archive:
+                    archive.writestr(self.relative, self.content)
+                    archive.writestr(second, self.content)
+                self.assert_rejected_archive(bundle, "archive_unsafe")
+
+    def test_nested_archive_is_not_opened_or_staged(self):
+        bundle = self.source / "outer.zip"
+        with ZipFile(bundle, "w") as archive:
+            archive.writestr(self.relative, self.content)
+            archive.writestr("extra/smplh.tar.xz", b"untrusted nested data")
+        self.assert_rejected_archive(bundle, "archive_nested")
+
+    def test_bad_tar_header_does_not_publish_earlier_model(self):
+        bundle = self.source / "corrupt.tar"
+        with tarfile.open(bundle, "w") as archive:
+            self.add_tar(archive, self.relative, self.content)
+        data = bytearray(bundle.read_bytes())
+        data[2 * tarfile.BLOCKSIZE] = ord("X")  # Corrupt the end marker after the model.
+        bundle.write_bytes(data)
+        self.assert_rejected_archive(bundle, "archive_invalid")
+
+    def test_zip_expanded_limit_covers_unrecognized_members(self):
+        bundle = self.source / "too-large.zip"
+        with ZipFile(bundle, "w", compression=ZIP_DEFLATED) as archive:
+            archive.writestr(self.relative, self.content)
+            archive.writestr("ignored.txt", b"." * 8192)
+        with patch.object(model_import, "_MAX_ARCHIVE_BYTES", bundle.stat().st_size + 1):
+            self.assert_rejected_archive(bundle, "archive_too_large")
+
+    def test_rejects_invalid_kind_and_unsupported_archive_extension(self):
+        bundle = self.source / "unknown.7z"
+        for kind, code in (("archive", "archive_unsupported"), ("unknown", "invalid_source")):
+            with self.assertRaises(model_import.ModelImportError) as raised:
+                self.installer.start(str(bundle), kind=kind)
+            self.assertEqual(raised.exception.code, code)
+        self.assertFalse(self.installer.active)
 
 
 if __name__ == "__main__":

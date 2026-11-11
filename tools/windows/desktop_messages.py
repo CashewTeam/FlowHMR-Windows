@@ -42,6 +42,10 @@ MESSAGES = {
     },
 }
 _PREFERENCE = Path(__file__).resolve().parents[2] / ".cache/desktop-language.txt"
+_ARCHIVE_FILTER = {
+    "zh-CN": "模型压缩包", "zh-TW": "模型壓縮檔", "en": "Model archives",
+    "ja": "モデルのアーカイブ", "ko": "모델 압축 파일", "ru": "Архивы моделей", "fr": "Archives de modèles",
+}
 
 
 def read_language():
@@ -50,6 +54,10 @@ def read_language():
     except (OSError, UnicodeError):
         saved = ""
     return saved if saved in MESSAGES else "zh-CN"
+
+
+def model_archive_filter():
+    return f"{_ARCHIVE_FILTER[read_language()]} (*.zip;*.tar.xz;*.tar.gz;*.tar;*.tgz)"
 
 
 def save_language(language):

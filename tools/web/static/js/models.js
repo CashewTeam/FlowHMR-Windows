@@ -15,7 +15,8 @@ export function initModelDialog(refreshInventory) {
   const directory = $("modelDirectory"), folderButton = $("modelOpenFolder");
   const refreshButton = $("modelRefresh"), status = $("modelCheckStatus"), verifyButton = $("modelVerify");
   const downloadButton = $("modelDownload"), stopButton = $("modelDownloadStop");
-  const importButton = $("modelImportFolder"), importBox = $("modelImport"), importLabel = $("modelImportLabel");
+  const archiveButton = $("modelImportArchive"), importButton = $("modelImportFolder");
+  const importBox = $("modelImport"), importLabel = $("modelImportLabel");
   const importBar = $("modelImportBar"), importGroups = $("modelImportGroups"), importResults = $("modelImportResults");
   const transferBox = $("modelTransfer"), transferLabel = $("modelTransferLabel");
   const transferBar = $("modelTransferBar"), transferErrors = $("modelTransferErrors");
@@ -25,6 +26,7 @@ export function initModelDialog(refreshInventory) {
   const working = () => active(transfer) || importing();
   const groupName = (id, fallback) => m(`model_name.${id}`, {}, fallback ?? id);
   const group = (id) => groupName(id, inventory?.items.find((item) => item.id === id)?.name);
+  const picker = (kind) => window.pywebview?.api?.[kind === "archive" ? "choose_model_archive" : "choose_model_folder"];
 
   function renderInventory(next) {
     inventory = next;
@@ -70,8 +72,12 @@ export function initModelDialog(refreshInventory) {
           row.append(source);
           if (item.id === "smplh") {
             if (!item.required) row.append(el("p", "model-install model-extract-hint", m("models.smplh_optional")));
-            row.append(el("p", "model-install model-extract-hint", m("models.smplh_extract_hint")));
+            const hint = typeof picker("archive") === "function" ? "models.smplh_archive_hint" : "models.smplh_extract_hint";
+            row.append(el("p", "model-install model-extract-hint", m(hint)));
           }
+        }
+        if (item.id === "hamer" && typeof picker("archive") === "function") {
+          row.append(el("p", "model-install model-extract-hint", m("models.hamer_archive_hint")));
         }
         const help = el("div", "model-install");
         if (item.status === "missing") {
@@ -115,9 +121,15 @@ export function initModelDialog(refreshInventory) {
 
   function syncButtons() {
     const running = active(transfer);
-    const native = !!window.pywebview?.api?.choose_model_folder;
-    show(importButton, native);
-    importButton.disabled = busy || working();
+    const archive = typeof picker("archive") === "function";
+    const folder = typeof picker("folder") === "function";
+    show("modelImportGuide", archive || folder);
+    show("modelManualGuide", !archive && !folder);
+    show("modelImportActions", archive || folder);
+    show("modelImportFormats", archive);
+    show(archiveButton, archive);
+    show(importButton, folder);
+    archiveButton.disabled = importButton.disabled = busy || working();
     refreshButton.disabled = busy || working();
     verifyButton.disabled = busy || working();
     show(downloadButton, !running && !!inventory?.downloadable?.length);
@@ -181,17 +193,25 @@ export function initModelDialog(refreshInventory) {
       }));
     }
     if (running) {
-      setText(importLabel, imported.phase === "copy" ? m("models.import_copy", {
-        file: imported.current_file || "",
-        done: sizeLabel(imported.bytes_done),
-        total: sizeLabel(imported.bytes_total),
+      const { phase, current_file: file, bytes_done: done, bytes_total: total } = imported;
+      if (phase === "extract") {
+        setText(importLabel, () => [
+          t("models.import_extract"), file, total > 0 ? `${sizeLabel(done)} / ${sizeLabel(total)}` : "",
+        ].filter(Boolean).join(" · "));
+      } else setText(importLabel, phase === "copy" ? m("models.import_copy", {
+        file: file || "",
+        done: sizeLabel(done),
+        total: sizeLabel(total),
       }) : m("models.import_scan"));
     } else if (imported?.state === "completed") {
       const installed = results.filter((row) => row.status === "installed").length;
       const skipped = results.filter((row) => row.status === "skipped").length;
       setText(importLabel, m("models.import_done", { installed, skipped, unresolved: results.length - installed - skipped }));
     } else if (imported?.state === "failed") {
-      setText(importLabel, m("models.import_failed", { detail: serverMessage(imported.error_code, {}, "") }));
+      const detail = imported.error_code === "extract_smplh_tar" && typeof picker("archive") === "function"
+        ? m("models.import_tar_hint")
+        : serverMessage(imported.error_code, imported.error_params, imported.error);
+      setText(importLabel, m("models.import_failed", { detail }));
     }
   }
 
@@ -277,25 +297,27 @@ export function initModelDialog(refreshInventory) {
     if (updated && !working()) await refresh();
   }
 
-  async function chooseFolder() {
-    const choose = window.pywebview?.api?.choose_model_folder;
-    if (!choose || busy || working()) return;
+  async function chooseImport(kind) {
+    const choose = picker(kind);
+    if (typeof choose !== "function" || busy || working()) return;
     begin();
+    let started = false;
     try {
-      const folder = await choose();
-      if (folder) imported = await startModelImport(folder);
+      const path = await choose.call(window.pywebview.api);
+      if (path) {
+        imported = await startModelImport(path, kind);
+        started = true;
+      }
     } catch (error) {
       setText(status, m("models.import_failed", { detail: error }));
     } finally {
       end();
     }
+    if (started && !working()) await refresh();
   }
 
   function syncFolderButton() {
     setText(folderButton, m(window.pywebview?.api?.open_models_folder ? "common.open_folder" : "models.copy_path"));
-    const native = !!window.pywebview?.api?.choose_model_folder;
-    show("modelImportGuide", native);
-    show("modelManualGuide", !native);
     syncButtons();
   }
   window.addEventListener("pywebviewready", syncFolderButton);
@@ -312,7 +334,8 @@ export function initModelDialog(refreshInventory) {
   stopButton.addEventListener("click", () => {
     if (active(transfer)) void changeDownload(() => stopModelDownload(transfer.id));
   });
-  importButton.addEventListener("click", chooseFolder);
+  archiveButton.addEventListener("click", () => { void chooseImport("archive"); });
+  importButton.addEventListener("click", () => { void chooseImport("folder"); });
   dialog.addEventListener("close", () => { version++; clearTimeout(pollTimer); });
   folderButton.addEventListener("click", async () => {
     try {

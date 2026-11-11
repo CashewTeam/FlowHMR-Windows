@@ -22,7 +22,7 @@ import webview
 ROOT = Path(__file__).resolve().parents[2]
 TITLE = "FlowHMR"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from desktop_messages import MESSAGES, read_language, save_language
+from desktop_messages import MESSAGES, model_archive_filter, read_language, save_language
 
 
 class _JobBasicLimits(ctypes.Structure):
@@ -154,8 +154,8 @@ def open_runtime_folder():
     os.startfile(directory)
 
 
-def expose_model_folder_picker(window, port, backend):
-    """Allow only the local FlowHMR page to open the desktop folder picker."""
+def expose_model_pickers(window, port, backend):
+    """Allow only the local FlowHMR page to open the model selection dialogs."""
     origin = f"http://127.0.0.1:{port}"
     last_directory = Path.home() / "Downloads"
     picker_lock = threading.Lock()
@@ -166,21 +166,28 @@ def expose_model_folder_picker(window, port, backend):
         current = urlsplit(window.get_current_url() or "")
         return f"{current.scheme}://{current.netloc}" == origin
 
-    def choose_model_folder():
+    def choose(dialog, file_types=()):
         nonlocal last_directory
         if not is_flowhmr_page() or not picker_lock.acquire(blocking=False):
             return None
         try:
-            selection = window.create_file_dialog(webview.FileDialog.FOLDER,
-                                                  directory=os.fspath(last_directory))
+            selection = window.create_file_dialog(dialog, directory=os.fspath(last_directory),
+                                                  allow_multiple=False, file_types=file_types)
             if selection and is_flowhmr_page():
-                last_directory = Path(selection[0])
-                return os.fspath(last_directory)
+                path = Path(selection[0])
+                last_directory = path if dialog == webview.FileDialog.FOLDER else path.parent
+                return os.fspath(path)
             return None
         finally:
             picker_lock.release()
 
-    window.expose(choose_model_folder)
+    def choose_model_folder():
+        return choose(webview.FileDialog.FOLDER)
+
+    def choose_model_archive():
+        return choose(webview.FileDialog.OPEN, (model_archive_filter(),))
+
+    window.expose(choose_model_folder, choose_model_archive)
 
 
 def expose_language_preference(window, port, backend):
@@ -357,7 +364,7 @@ def main():
         )
         window.expose(open_models_folder)
         window.expose(open_runtime_folder)
-        expose_model_folder_picker(window, port, backend)
+        expose_model_pickers(window, port, backend)
         expose_language_preference(window, port, backend)
         expose_runtime_restart(window, port, backend)
         window.events.before_show += configure_downloads

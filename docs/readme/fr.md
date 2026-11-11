@@ -54,7 +54,9 @@ Connectez-vous à la [page de téléchargement officielle de MANO](https://mano.
 | Modèle de corps neutre pour la capture de mouvements de base | **Extended SMPL+H model** (AMASS), `smplh.tar.xz` | `models/body_models/smplh/` |
 | Corps masculin et féminin pour la capture de base ; contient aussi les fichiers MANO nécessaires à l’affinage des doigts | **Models & Code**, `mano_v1_2.zip` | `models/` |
 
-Après le téléchargement, extrayez l’archive. Dans **Modèles**, cliquez sur **Importer un dossier extrait…** (导入已解压文件夹…) et choisissez le dossier. L’application reconnaît les modèles et les copie aux bons emplacements, en conservant les fichiers sources. La fenêtre Modèles indique les fichiers encore manquants. Pour affiner les doigts, il faut les fichiers MANO de `mano_v1_2.zip` et le modèle public **HaMeR**. Téléchargez HaMeR depuis sa ligne ou avec **Télécharger tous les modèles publics**.
+Après le téléchargement, choisissez **Modèles → Importer une archive de modèles…** (模型 → 导入模型压缩包…) et sélectionnez directement `mano_v1_2.zip` ou `smplh.tar.xz`. L’application extrait l’archive, identifie les modèles et les installe aux bons emplacements. Elle conserve l’archive d’origine et indique quels groupes sont prêts et quels fichiers manquent. Si vous avez déjà extrait l’archive, choisissez **Importer un dossier extrait…** (导入已解压文件夹…).
+
+Pour affiner les doigts, il faut les fichiers MANO de `mano_v1_2.zip` et le modèle public **HaMeR**. Téléchargez HaMeR depuis sa ligne ou avec **Télécharger tous les modèles publics**.
 
 Pour l’arborescence d’installation manuelle, les sources de téléchargement et le rôle des modèles, consultez le [guide des fichiers de modèles](../../models/README.md).
 

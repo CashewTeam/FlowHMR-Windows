@@ -40,7 +40,7 @@ export const startModelDownload = (group) => postJson("/api/models/download", gr
 export const stopModelDownload = (id) => postJson("/api/models/download/stop", { id });
 export const verifyModels = () => postJson("/api/models/verify");
 export const getModelImport = () => json("/api/models/import", { cache: "no-store" });
-export const startModelImport = (path) => postJson("/api/models/import", { path });
+export const startModelImport = (path, kind = "folder") => postJson("/api/models/import", { path, kind });
 export const getRuntime = () => json("/api/runtime", { cache: "no-store" });
 export const startRuntimeDownload = (version) => postJson("/api/runtime/download", { version });
 export const stopRuntimeDownload = (id) => postJson("/api/runtime/download/stop", { id });

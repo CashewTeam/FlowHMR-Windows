@@ -1,17 +1,23 @@
-"""Import known model files from extracted local folders without loading models."""
+"""Import known model files from local folders or archives without loading models."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 import errno
+import gzip
 import hashlib
 import logging
+import lzma
 from math import prod
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
 import stat
+import tarfile
 from threading import Lock, Thread
-from zipfile import BadZipFile, ZipFile
+from types import SimpleNamespace
+from unicodedata import normalize
+import zipfile
+import zlib
 
 from . import model_files as files, model_integrity, model_sources as sources
 
@@ -19,6 +25,11 @@ from . import model_files as files, model_integrity, model_sources as sources
 _CHUNK = 4 << 20
 _MAX_DEPTH = 6
 _MAX_ENTRIES = 4096
+_MAX_ARCHIVE_BYTES = 16 << 30
+_MAX_ZIP_INDEX = 16 << 20
+_ARCHIVE_TYPES = {".zip": "zip", ".tar": "tar", ".tar.xz": "xz", ".tar.gz": "gz", ".tgz": "gz"}
+_NESTED_ARCHIVES = (*_ARCHIVE_TYPES, ".7z", ".rar", ".gz", ".xz", ".bz2", ".zst")
+_ARCHIVE_STAGE = ".flowhmr-archive-import"
 _MANO_MODELS = (*files.MANO_FILES, files.SMPLH_FILES["female"], files.SMPLH_FILES["male"])
 _NEUTRAL = files.SMPLH_FILES["neutral"]
 _GROUPS = {
@@ -185,7 +196,7 @@ def _validate_neutral(path, *, deep):
     from numpy.lib import format as npy
 
     try:
-        with ZipFile(path) as archive:
+        with zipfile.ZipFile(path) as archive:
             members = archive.infolist()
             if (len(members) > 32 or len({member.filename for member in members}) != len(members)
                     or sum(member.file_size for member in members) > (256 << 20)
@@ -202,7 +213,7 @@ def _validate_neutral(path, *, deep):
                         raise ModelImportError("invalid_format")
             if deep and archive.testzip() is not None:
                 raise ModelImportError("invalid_format")
-    except (BadZipFile, EOFError, ValueError, SyntaxError, RuntimeError, NotImplementedError):
+    except (zipfile.BadZipFile, EOFError, ValueError, SyntaxError, RuntimeError, NotImplementedError):
         raise ModelImportError("invalid_format") from None
 
 
@@ -323,6 +334,211 @@ def _remove_incomplete(destination):
     part.unlink()
 
 
+def _archive_type(path):
+    name = path.name.casefold()
+    return next((kind for suffix, kind in _ARCHIVE_TYPES.items() if name.endswith(suffix)), None)
+
+
+def _archive_part(directory, relative):
+    return directory / (hashlib.sha256(relative.encode("ascii")).hexdigest() + ".import.part")
+
+
+def _clean_archive_stage(directory):
+    try:
+        info = directory.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISDIR(info.st_mode) or _reparse(info):
+        raise ModelImportError("unsafe_destination")
+    allowed = {_archive_part(directory, relative).name for relative in files.MODEL_DESTINATIONS}
+    entries = []
+    for entry in directory.iterdir():
+        info = entry.lstat()
+        if entry.name not in allowed or not stat.S_ISREG(info.st_mode) or _reparse(info):
+            raise ModelImportError("unsafe_destination")
+        entries.append(entry)
+    for entry in entries:
+        entry.unlink()
+    directory.rmdir()
+
+
+@contextmanager
+def _archive_stage(root):
+    directory = root / _ARCHIVE_STAGE
+    _clean_archive_stage(directory)
+    directory.mkdir()
+    try:
+        yield directory
+    finally:
+        _clean_archive_stage(directory)
+
+
+def _member_path(name, directory):
+    # POSIX tar writers commonly prefix every member with './'. Reject other
+    # ambiguous spellings and Windows device/alternate-stream names.
+    name = name.removeprefix("./")
+    if name.startswith("/"):
+        raise ModelImportError("archive_unsafe")
+    if directory:
+        name = name.removesuffix("/")
+        if name in ("", "."):
+            return None
+    parts = name.split("/")
+    if (len(name) > 1024 or len(parts) > 24 or not all(parts)
+            or any(part in (".", "..") or part.endswith((".", " ")) or PureWindowsPath(part).is_reserved()
+                   for part in parts)
+            or any(ord(char) < 32 or char in '\\<>:"|?*' for char in name)):
+        raise ModelImportError("archive_unsafe")
+    return PurePosixPath(*parts)
+
+
+class _ArchiveIndex:
+    def __init__(self):
+        self.names = set()
+        self.targets = set()
+        self.entries = 0
+        self.size = 0
+
+    def add(self, name, size, directory):
+        self.entries += 1
+        self.size += size
+        if self.entries > _MAX_ENTRIES or self.size > _MAX_ARCHIVE_BYTES:
+            raise ModelImportError("archive_too_large")
+        if size < 0 or (directory and size):
+            raise ModelImportError("archive_unsafe")
+        path = _member_path(name, directory)
+        if path is None:
+            return None
+        name = normalize("NFC", path.as_posix()).casefold()
+        if name in self.names:
+            raise ModelImportError("archive_unsafe")
+        self.names.add(name)
+        if directory:
+            return None
+        if name.endswith(_NESTED_ARCHIVES):
+            raise ModelImportError("archive_nested")
+        if path.name.casefold() not in _MODEL_NAMES:
+            return None
+        info = SimpleNamespace(st_size=size)
+        candidates = [(priority, relative) for relative in files.MODEL_DESTINATIONS
+                      if path.name.casefold() == PurePosixPath(relative).name.casefold()
+                      and (priority := _priority(relative, path, info, {}))]
+        if not candidates:
+            return None
+        candidates.sort(reverse=True)
+        priority, relative = candidates[0]
+        if relative in self.targets or (len(candidates) > 1 and candidates[1][0] == priority):
+            raise ModelImportError("archive_unsafe")
+        self.targets.add(relative)
+        return relative
+
+
+class _LimitedTarInfo(tarfile.TarInfo):
+    @classmethod
+    def fromtarfile(cls, archive):
+        try:
+            return super().fromtarfile(archive)
+        except tarfile.EOFHeaderError:
+            archive._flowhmr_tar_end = True
+            raise
+
+    def _check_metadata(self, archive):
+        count = getattr(archive, "_flowhmr_metadata_count", 0) + 1
+        archive._flowhmr_metadata_count = count
+        if not 0 <= self.size <= 64 << 10 or count > _MAX_ENTRIES:
+            raise ModelImportError("archive_too_large")
+
+    def _proc_gnulong(self, archive):
+        self._check_metadata(archive)
+        return super()._proc_gnulong(archive)
+
+    def _proc_pax(self, archive):
+        self._check_metadata(archive)
+        return super()._proc_pax(archive)
+
+    def _proc_sparse(self, archive):
+        raise ModelImportError("archive_unsafe")
+
+    def _proc_gnusparse_00(self, *args):
+        raise ModelImportError("archive_unsafe")
+
+    _proc_gnusparse_01 = _proc_gnusparse_00
+    _proc_gnusparse_10 = _proc_gnusparse_00
+
+
+class _XZReader:
+    """Stream one XZ container with bounded decoder memory and output chunks."""
+
+    def __init__(self, source):
+        self.source = source
+        self.decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=128 << 20)
+        self.finished = False
+
+    def read(self, size):
+        pieces = []
+        while size and not self.decoder.eof:
+            chunk = b""
+            if self.decoder.needs_input:
+                chunk = self.source.read(64 << 10)
+                if not chunk:
+                    raise EOFError("Incomplete XZ stream")
+            piece = self.decoder.decompress(chunk, max_length=size)
+            pieces.append(piece)
+            size -= len(piece)
+        if self.decoder.eof and not self.finished:
+            tail = self.decoder.unused_data
+            padding = len(tail)
+            while True:
+                if tail.strip(b"\0"):
+                    raise ModelImportError("archive_invalid")
+                tail = self.source.read(64 << 10)
+                if not tail:
+                    break
+                padding += len(tail)
+            if padding % 4:
+                raise ModelImportError("archive_invalid")
+            self.finished = True
+        return b"".join(pieces)
+
+
+class _BoundedTarStream:
+    def __init__(self, stream, raw, progress):
+        self.stream, self.raw, self.progress = stream, raw, progress
+        self.expanded = 0
+
+    def read(self, size):
+        chunk = self.stream.read(min(size, _CHUNK))
+        self.expanded += len(chunk)
+        if self.expanded > _MAX_ARCHIVE_BYTES:
+            raise ModelImportError("archive_too_large")
+        self.progress(self.raw.tell())
+        return chunk
+
+
+@contextmanager
+def _open_archive_source(path):
+    try:
+        _check_directories(path.parent)
+        info = path.lstat()
+        if _reparse(info):
+            raise ModelImportError("unsafe_source")
+        if not stat.S_ISREG(info.st_mode):
+            raise ModelImportError("invalid_source")
+        if info.st_size > _MAX_ARCHIVE_BYTES:
+            raise ModelImportError("archive_too_large")
+        source = path.open("rb")
+    except PermissionError:
+        raise ModelImportError("source_unreadable") from None
+    except FileNotFoundError:
+        raise ModelImportError("invalid_source") from None
+    with source:
+        if not _snapshot_matches(info, os.fstat(source.fileno())):
+            raise ModelImportError("source_changed")
+        yield source, info.st_size
+        if not _snapshot_matches(info, os.fstat(source.fileno())):
+            raise ModelImportError("source_changed")
+
+
 class ModelImporter:
     def __init__(self, root=files.MODEL_ROOT, logger=None):
         self.root = Path(root).absolute()
@@ -348,13 +564,19 @@ class ModelImporter:
         with self._lock:
             return self._snapshot()
 
-    def start(self, source):
+    def start(self, source, *, kind="folder"):
+        if kind not in ("folder", "archive"):
+            raise ModelImportError("invalid_source")
         source = _source_path(source)
+        archive_type = _archive_type(source) if kind == "archive" else None
+        if kind == "archive" and archive_type is None:
+            raise ModelImportError("archive_unsupported")
         with self._lock:
             if self._state["state"] == "running":
                 raise ModelImportError("busy")
             self._state = self._initial("running")
-            Thread(target=self._run, args=(source,), daemon=True, name="flowhmr-model-import").start()
+            target, args = (self._run_archive, (source, archive_type)) if archive_type else (self._run, (source,))
+            Thread(target=target, args=args, daemon=True, name="flowhmr-model-import").start()
             return self._snapshot()
 
     def _update(self, **fields):
@@ -385,14 +607,165 @@ class ModelImporter:
         try:
             with _target_lock(self.root):
                 self._discard_interrupted_copies()
+                try:
+                    _clean_archive_stage(self.root / _ARCHIVE_STAGE)
+                except (ModelImportError, OSError):
+                    pass  # An unrelated stage must not block folder imports.
                 self._install(matches)
         except Exception as error:
             self._fail(_error_code(error))
             return
         self._update(state="completed", phase=None, current_file=None)
 
+    def _run_archive(self, source, kind):
+        index = _ArchiveIndex()
+        try:
+            with _target_lock(self.root), _archive_stage(self.root) as stage:
+                self._discard_interrupted_copies()
+                with _open_archive_source(source) as (stream, archive_size):
+                    if kind == "zip":
+                        ready = self._read_zip(stream, stage, index)
+                    else:
+                        ready = self._read_tar(stream, stage, index, kind, archive_size)
+                if not index.targets:
+                    raise ModelImportError("no_models_found")
+                groups = [group for group, relatives in _GROUPS.items() if index.targets.intersection(relatives)]
+                self._update(groups=groups, current_file=None)
+                # Do not publish until the complete archive structure has been accepted.
+                # The staged files already passed their size, format and digest checks.
+                for relative, part, destination in ready:
+                    try:
+                        _check_directories(destination.parent, destination=True)
+                        _publish(part, destination)
+                    except FileExistsError:
+                        self._result(relative, "conflict", "destination_exists")
+                    except (ModelImportError, OSError) as error:
+                        self._result(relative, "failed", _error_code(error))
+                    else:
+                        self._result(relative, "installed")
+                for group in groups:
+                    for relative in _GROUPS[group]:
+                        if relative not in index.targets and not self._destination_status(relative, self.root / relative):
+                            self._result(relative, "missing", "missing_file")
+        except (zipfile.BadZipFile, tarfile.TarError, gzip.BadGzipFile, lzma.LZMAError,
+                zlib.error, EOFError, UnicodeError, RuntimeError):
+            self._fail("archive_invalid")
+            return
+        except Exception as error:
+            self._fail(_error_code(error))
+            return
+        self._update(state="completed", phase=None, current_file=None)
+
+    def _read_zip(self, stream, stage, index):
+        # ZipFile reads the entire central directory at open; bound that index
+        # before invoking it. The stdlib parser handles ZIP64 end records too.
+        end = zipfile._EndRecData(stream)
+        if end is None:
+            raise ModelImportError("archive_invalid")
+        if end[zipfile._ECD_ENTRIES_TOTAL] > _MAX_ENTRIES or end[zipfile._ECD_SIZE] > _MAX_ZIP_INDEX:
+            raise ModelImportError("archive_too_large")
+        if end[zipfile._ECD_DISK_NUMBER] or end[zipfile._ECD_ENTRIES_THIS_DISK] != end[zipfile._ECD_ENTRIES_TOTAL]:
+            raise ModelImportError("archive_invalid")
+        with zipfile.ZipFile(stream) as archive:
+            plan = []
+            for member in archive.infolist():
+                unix_type = stat.S_IFMT(member.external_attr >> 16) if member.create_system == 3 else 0
+                if (unix_type not in (0, stat.S_IFREG, stat.S_IFDIR)
+                        or member.external_attr & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                    raise ModelImportError("archive_unsafe")
+                if member.flag_bits & 1 or member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    raise ModelImportError("archive_invalid")
+                is_dir = (member.is_dir() or unix_type == stat.S_IFDIR
+                          or bool(member.external_attr & stat.FILE_ATTRIBUTE_DIRECTORY))
+                relative = index.add(member.orig_filename, member.file_size, is_dir)
+                if relative:
+                    plan.append((relative, member))
+            self._update(phase="extract", bytes_total=sum(member.file_size for _, member in plan))
+            offset = 0
+            ready = []
+            for relative, member in plan:
+                self._update(current_file=relative)
+
+                def report(copied):
+                    self._update(bytes_done=offset + copied)
+
+                item = self._stage_member(stage, relative, member.file_size, lambda: archive.open(member), report)
+                if item:
+                    ready.append(item)
+                offset += member.file_size
+                self._update(bytes_done=offset)
+            return ready
+
+    def _read_tar(self, stream, stage, index, kind, archive_size):
+        wrapped = gzip.GzipFile(fileobj=stream) if kind == "gz" else nullcontext(
+            _XZReader(stream) if kind == "xz" else stream)
+        self._update(phase="extract", bytes_total=archive_size)
+        ready = []
+        with wrapped as compressed:
+            reader = _BoundedTarStream(compressed, stream, lambda size: self._update(bytes_done=min(size, archive_size)))
+            with tarfile.open(fileobj=reader, mode="r|", tarinfo=_LimitedTarInfo, bufsize=_CHUNK) as archive:
+                for member in archive:
+                    if (not member.isfile() and not member.isdir()) or member.issparse():
+                        raise ModelImportError("archive_unsafe")
+                    relative = index.add(member.name, member.size, member.isdir())
+                    if not relative:
+                        continue
+                    self._update(current_file=relative)
+                    item = self._stage_member(stage, relative, member.size, lambda: archive.extractfile(member))
+                    if item:
+                        ready.append(item)
+                    self._update(current_file=None)
+                # tarfile may stop silently on an invalid last header. Require the
+                # normal two zero records and consume the trailing padding so the
+                # XZ/GZIP stream checksum and truncation checks run as well.
+                if (not getattr(archive, "_flowhmr_tar_end", False)
+                        or archive.fileobj.read(tarfile.BLOCKSIZE) != b"\0" * tarfile.BLOCKSIZE):
+                    raise ModelImportError("archive_invalid")
+                while tail := archive.fileobj.read(_CHUNK):
+                    if tail.strip(b"\0"):
+                        raise ModelImportError("archive_invalid")
+        self._update(bytes_done=archive_size)
+        return ready
+
+    def _stage_member(self, stage, relative, size, open_member, progress=lambda _: None):
+        destination = self.root / relative
+        if self._destination_status(relative, destination):
+            return None
+        part = _archive_part(stage, relative)
+        try:
+            _validate_size(relative, SimpleNamespace(st_size=size))
+            if shutil.disk_usage(stage).free < size:
+                raise ModelImportError("no_space")
+            asset = _ASSETS.get(relative)
+            digest = hashlib.sha256() if asset and asset.sha256 else None
+            with open_member() as source, part.open("xb") as output:
+                copied = 0
+                while copied < size:
+                    chunk = source.read(min(_CHUNK, size - copied))
+                    if not chunk:
+                        raise ModelImportError("archive_invalid")
+                    output.write(chunk)
+                    if digest is not None:
+                        digest.update(chunk)
+                    copied += len(chunk)
+                    progress(copied)
+                if source.read(1):
+                    raise ModelImportError("archive_invalid")
+                if digest is not None and digest.hexdigest() != asset.sha256:
+                    raise ModelImportError("checksum_mismatch")
+                output.flush()
+                os.fsync(output.fileno())
+            _validate_format(relative, part, deep=True)
+        except ModelImportError as error:
+            if error.code not in ("invalid_size", "invalid_format", "checksum_mismatch", "no_space"):
+                raise
+            self._result(relative, "failed" if error.code == "no_space" else "invalid", error.code)
+            part.unlink(missing_ok=True)
+            return None
+        return relative, part, destination
+
     def _fail(self, code):
-        self._logger.warning("Model folder import did not complete (%s)", code)
+        self._logger.warning("Model import did not complete (%s)", code)
         self._update(state="failed", phase=None, current_file=None, error_code=code)
 
     def _discard_interrupted_copies(self):
@@ -406,6 +779,32 @@ class ModelImporter:
                 # of this import is reported per file when the copy is attempted.
                 continue
 
+    def _destination_status(self, relative, destination, candidates=()):
+        """Report an existing or unusable destination without overwriting it."""
+        try:
+            _check_directories(destination.parent, destination=True)
+            try:
+                existing = destination.lstat()
+            except FileNotFoundError:
+                return False
+            if _reparse(existing):
+                raise ModelImportError("unsafe_destination")
+            try:
+                if not stat.S_ISREG(existing.st_mode):
+                    raise ModelImportError("invalid_format")
+                _validate_size(relative, existing)
+                _validate_format(relative, destination)
+                if self.root == files.MODEL_ROOT and not model_integrity.check(destination).ok:
+                    raise ModelImportError("invalid_format")
+            except ModelImportError:
+                self._result(relative, "conflict", "destination_exists")
+            else:
+                already_there = any(candidate.path == destination for candidate in candidates)
+                self._result(relative, "skipped", "already_in_place" if already_there else "already_installed")
+        except (ModelImportError, OSError) as error:
+            self._result(relative, "failed", _error_code(error))
+        return True
+
     def _install(self, matches):
         pending = []
         for relatives in _GROUPS.values():
@@ -414,30 +813,7 @@ class ModelImporter:
             for relative in relatives:
                 candidates = matches.get(relative, [])
                 destination = self.root / relative
-                try:
-                    _check_directories(destination.parent, destination=True)
-                    try:
-                        existing = destination.lstat()
-                    except FileNotFoundError:
-                        existing = None
-                    if existing is not None:
-                        if _reparse(existing):
-                            raise ModelImportError("unsafe_destination")
-                        try:
-                            if not stat.S_ISREG(existing.st_mode):
-                                raise ModelImportError("invalid_format")
-                            _validate_size(relative, existing)
-                            _validate_format(relative, destination)
-                            if self.root == files.MODEL_ROOT and not model_integrity.check(destination).ok:
-                                raise ModelImportError("invalid_format")
-                        except ModelImportError:
-                            self._result(relative, "conflict", "destination_exists")
-                        else:
-                            already_there = any(candidate.path == destination for candidate in candidates)
-                            self._result(relative, "skipped", "already_in_place" if already_there else "already_installed")
-                        continue
-                except (ModelImportError, OSError) as error:
-                    self._result(relative, "failed", _error_code(error))
+                if self._destination_status(relative, destination, candidates):
                     continue
 
                 if not candidates:

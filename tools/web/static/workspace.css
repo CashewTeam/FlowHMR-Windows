@@ -168,6 +168,8 @@ body { height: 100dvh; }
 .model-dialog button { white-space: nowrap; }
 .model-location .input { min-width: 0; flex: 1; padding: 5px 7px; font-size: 12px; }
 .model-guide { margin: 0 12px 9px; color: var(--muted); font-size: 12px; }
+.model-import-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 12px 9px; }
+.model-import-formats { color: var(--muted); font-size: 11px; }
 .model-list { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 12px 10px; }
 .model-item + .model-item { border-top: 1px solid var(--line); }
 .model-row {

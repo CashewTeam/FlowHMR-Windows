@@ -1219,8 +1219,11 @@ def api_model_import():
     if request.method == "GET":
         return jsonify(MODEL_IMPORTER.status())
     body = request.get_json(silent=True)
-    if not isinstance(body, dict) or not isinstance(body.get("path"), str):
-        return api_error("invalid_source", "请选择一个已解压的模型文件夹。", 400)
+    if not isinstance(body, dict) or set(body) - {"path", "kind"} or not isinstance(body.get("path"), str):
+        return api_error("invalid_source", "请选择支持的模型压缩包或已解压的文件夹。", 400)
+    kind = body.get("kind", "folder")
+    if kind not in ("folder", "archive"):
+        return api_error("invalid_source", "请选择支持的模型压缩包或已解压的文件夹。", 400)
     with RUNTIME_SWITCH_LOCK:
         if RUNTIME.summary()["pending_restart"]:
             return api_error("runtime_restart_required", "请先重启运行环境，完成切换。", 409)
@@ -1229,9 +1232,9 @@ def api_model_import():
         if MODEL_IMPORTER.active or model_download_active() or MODEL_VERIFY_LOCK.locked():
             return api_error("model_operation_busy", "正在下载、导入或校验模型，请稍后再导入。", 409)
         try:
-            return jsonify(MODEL_IMPORTER.start(body["path"])), 202
+            return jsonify(MODEL_IMPORTER.start(body["path"], kind=kind)), 202
         except ModelImportError as error:
-            return api_error(error.code, "无法打开这个模型文件夹。", 400)
+            return api_error(error.code, "无法打开选中的模型文件或文件夹。", 400)
 
 
 @app.route("/api/upload", methods=["POST"])

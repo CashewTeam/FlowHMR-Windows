@@ -57,6 +57,22 @@ class HistoryTest(unittest.TestCase):
 
 
 class ModelIntegrityTest(unittest.TestCase):
+    def test_archive_import_is_local_and_preserves_folder_clients(self):
+        args = SimpleNamespace(device="cuda:0", ckpt=None, model_cfg=None)
+        with (patch.object(server, "ARGS", args), patch.object(server, "JOBS", {}),
+              patch.object(server.RUNTIME, "summary", return_value={"pending_restart": False}),
+              patch.object(server.MODEL_IMPORTER, "start", return_value={"state": "running"}) as start,
+              server.app.test_client() as client):
+            request = {"path": "C:/Models/mano_v1_2.zip", "kind": "archive"}
+            denied = client.post("/api/models/import", json=request, headers={"Origin": "https://example.org"})
+            self.assertEqual(denied.status_code, 403)
+            self.assertFalse(start.called)
+            self.assertEqual(client.post("/api/models/import", json={**request, "kind": "other"}).status_code, 400)
+            self.assertEqual(client.post("/api/models/import", json=request).status_code, 202)
+            start.assert_called_once_with(request["path"], kind="archive")
+            self.assertEqual(client.post("/api/models/import", json={"path": "C:/Models/mano_v1_2"}).status_code, 202)
+            start.assert_called_with("C:/Models/mano_v1_2", kind="folder")
+
     def test_download_all_and_individual_actions_only_offer_public_files(self):
         with TemporaryDirectory() as temporary, patch.object(files, "MODEL_ROOT", Path(temporary)):
             args = SimpleNamespace(device="cuda:0", ckpt=None, model_cfg=None)

@@ -54,7 +54,9 @@ Sign in to the [official MANO downloads page](https://mano.is.tue.mpg.de/downloa
 | Neutral body model for basic motion capture | **Extended SMPL+H model** (AMASS), `smplh.tar.xz` | `models/body_models/smplh/` |
 | Male and female body models for basic motion capture; also includes the MANO files required for finger refinement | **Models & Code**, `mano_v1_2.zip` | `models/` |
 
-After downloading and extracting the package, open **Models**, click **Import extracted folder…** (导入已解压文件夹…), and select the extracted folder. The app identifies the models and copies them to the right locations, keeping the source files intact. The Models dialog shows any files still missing. Finger refinement needs the MANO files from `mano_v1_2.zip` and the public **HaMeR** model. Download HaMeR from its own row or with **Download all public models**.
+After downloading, choose **Models → Import model archive…** (模型 → 导入模型压缩包…) and select `mano_v1_2.zip` or `smplh.tar.xz` directly. The app extracts the archive, identifies the models and installs them in the right locations. It keeps the original archive and shows which model groups are ready or still missing files. If you already extracted the archive, choose **Import extracted folder…** (导入已解压文件夹…) instead.
+
+Finger refinement needs the MANO files from `mano_v1_2.zip` and the public **HaMeR** model. Download HaMeR from its own row or with **Download all public models**.
 
 For the full manual folder layout, download sources and model uses, see [Model files](../../models/README.md).
 
