@@ -190,12 +190,18 @@ def animate_rotation_from_rotmats(
 ) -> None:
     eulers = np.array([mat2euler_deg(m, axes) for m in rot_mats])
     reference = mat2euler_deg(preroll, axes) if preroll is not None else None
-    if axes == DEFAULT_EULER_AXES:
+    if len(axes) == 4 and axes.startswith("s") and set(axes[1:]) == {"x", "y", "z"}:
         # Choose the closer equivalent XYZ branch and unwrap it between keys.
         for i in range(1, len(eulers)):
             eulers[i] = _nearest_xyz(eulers[i], eulers[i - 1])
         if reference is not None:
             reference = _nearest_xyz(reference, eulers[0])
+        # transforms3d returns the angles in rotation order; FBX curves are named XYZ.
+        if axes != DEFAULT_EULER_AXES:
+            columns = [axes[1:].index(axis) for axis in "xyz"]
+            eulers = eulers[:, columns]
+            if reference is not None:
+                reference = reference[columns]
     for axis in ["X", "Y", "Z"]:
         animate_single_channel(anim_layer, node.LclRotation, axis, eulers, frame_duration, start_frame,
                                preroll=reference)
@@ -265,7 +271,7 @@ def build_mesh_node(
 
 def build_skeleton_nodes(
     mgr: fbx.FbxManager, scene: fbx.FbxScene, joints_pos: np.ndarray, parents: np.ndarray, joint_names: List[str],
-    *, rest_rotations=None, tip_lengths=None, parent_node=None, reference_name="FlowHMR Motion",
+    *, rest_rotations=None, tip_lengths=None, tip_names=None, parent_node=None, reference_name="FlowHMR Motion",
 ) -> List[fbx.FbxNode]:
     """Build skeleton nodes. parents array is not modified (safe to pass original)."""
     root_node = parent_node or scene.GetRootNode()
@@ -302,7 +308,8 @@ def build_skeleton_nodes(
         raise ValueError("No skeleton nodes created")
     ref_node.AddChild(skel_nodes[0])  # The armature container is not a bone.
     for i, length in (tip_lengths or {}).items():
-        skel_nodes[i].AddChild(make_limb(joint_names[i] + "_end", (0., length, 0.)))
+        name = (tip_names or {}).get(i, joint_names[i] + "_end")
+        skel_nodes[i].AddChild(make_limb(name, (0., length, 0.)))
     return skel_nodes
 
 

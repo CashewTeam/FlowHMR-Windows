@@ -1,6 +1,7 @@
 import hashlib
 from importlib.util import module_from_spec, spec_from_file_location
 import json
+import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -15,6 +16,184 @@ from flowhmr.model_downloads import missing_downloads
 _spec = spec_from_file_location("flowhmr_windows_web", Path(__file__).resolve().parents[1] / "tools/web/server.py")
 server = module_from_spec(_spec)
 _spec.loader.exec_module(server)
+
+
+class VideoSourceTest(unittest.TestCase):
+    def test_partial_preview_and_original_keep_separate_byte_ranges(self):
+        with TemporaryDirectory() as directory:
+            job_id = "20261111_120000_000001"
+            job_dir = Path(directory, job_id)
+            canonical = job_dir / "input/input_30fps.mp4"
+            canonical.parent.mkdir(parents=True)
+            original = b"0123456789original"
+            converted = b"abpreview"
+            (job_dir / "input.mp4").write_bytes(original)
+            job = dict(id=job_id, ext=".mp4", status="running", source_frames=60, created=0)
+            with (patch.object(server, "ARGS", SimpleNamespace(work_dir=directory)),
+                  patch.object(server, "JOBS", {job_id: job}),
+                  patch.object(server, "MEMBER_DIRS", {}), server.app.test_client() as client):
+                status = f"/api/jobs/{job_id}"
+                raw = f"{status}/video?source=original"
+                preview = f"{status}/video?source=preview"
+                self.assertFalse(client.get(status).json["has_preview_video"])
+                self.assertEqual(client.get(preview).status_code, 404)
+                with client.get(raw, headers={"Range": "bytes=0-1"}) as head:
+                    self.assertEqual((head.status_code, head.data), (206, original[:2]))
+                canonical.write_bytes(converted)
+                self.assertTrue(client.get(status).json["has_preview_video"])
+                with client.get(raw, headers={"Range": "bytes=10-"}) as tail:
+                    self.assertEqual((tail.status_code, tail.data), (206, original[10:]))
+                    self.assertEqual(tail.headers["Content-Range"], f"bytes 10-{len(original)-1}/{len(original)}")
+                with client.get(preview, headers={"Range": "bytes=2-"}) as tail:
+                    self.assertEqual((tail.status_code, tail.data), (206, converted[2:]))
+                    self.assertEqual(tail.headers["Content-Range"], f"bytes 2-{len(converted)-1}/{len(converted)}")
+
+
+class CharacterFileTest(unittest.TestCase):
+    def test_native_pick_exposes_only_model_and_local_textures(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = root / "角色/奥黛塔.pmx"
+            (model.parent / "tex").mkdir(parents=True)
+            model.write_bytes(b"PMX")
+            (model.parent / "tex/皮肤.png").write_bytes(b"texture")
+            (model.parent / "other.fbx").write_bytes(b"unselected")
+            (root / "private.png").write_bytes(b"outside")
+            with (patch.dict(os.environ, {server.CHARACTER_KEY_ENV: "test-key"}),
+                  patch.object(server, "CHARACTER_FILES", server.CharacterFiles()), server.app.test_client() as client):
+                register = "/api/desktop/character-file"
+                self.assertEqual(client.post(register, json={"file": str(model)}).status_code, 403)
+                auth = {"X-FlowHMR-Desktop-Key": "test-key"}
+                self.assertEqual(client.post(register, json={"file": str(model)},
+                                             headers={**auth, "Origin": "https://example.org"}).status_code, 403)
+                choice = client.post(register, json={"file": str(model)}, headers=auth).json
+                self.assertEqual(choice["name"], model.name)
+                path = f"/api/character-resource/{choice['ticket']}"
+                with client.get(path) as picked:
+                    self.assertEqual(picked.data, b"PMX")
+                    self.assertEqual(picked.headers["Cache-Control"], "no-store")
+                with client.get(path, query_string={"texture": r"tex\皮肤.png"}) as texture:
+                    self.assertEqual(texture.data, b"texture")
+                for invalid in ("../private.png", str(root / "private.png"), "other.fbx", "https://example.org/a.png"):
+                    self.assertEqual(client.get(path, query_string={"texture": invalid}).status_code, 404)
+                self.assertEqual(client.get(path, headers={"Sec-Fetch-Site": "cross-site"}).status_code, 403)
+
+    def test_character_library_reopens_copies_and_keeps_each_actors_pose(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "original"
+            texture = source / "textures/皮肤.png"
+            texture.parent.mkdir(parents=True)
+            texture.write_bytes(b"referenced image")
+            (source / "unrelated.png").write_bytes(b"not used")
+            pmx, fbx = source / "奥黛塔.pmx", source / "body.fbx"
+            pmx.write_bytes(b"model one")
+            fbx.write_bytes(b"model two")
+            library_dir = root / "models/characters"
+            path = "/api/character-library"
+            jobs = {f"actor{i}": {"status": "done", "selected_person": i - 1} for i in (1, 2)}
+            with (patch.dict(os.environ, {server.CHARACTER_KEY_ENV: "test-key"}),
+                  patch.object(server, "JOBS", jobs), server.app.test_client() as client):
+                def save(file, image=None):
+                    choice = client.post("/api/desktop/character-file", json={"file": str(file)},
+                                         headers={"X-FlowHMR-Desktop-Key": "test-key"}).get_json()
+                    ticket = choice["ticket"]
+                    if image:
+                        with client.get(f"/api/character-resource/{ticket}", query_string={"texture": image}) as response:
+                            self.assertEqual(response.data, b"referenced image")
+                    saved = client.post(path, json={"ticket": ticket, "name": file.stem})
+                    self.assertEqual(saved.status_code, 200, saved.get_json())
+                    return saved.json["id"]
+
+                def assign(person, identifier, pose=None, select=True):
+                    res = client.put(f"{path}/actors/actor{person}",
+                                     json=dict(id=identifier, person=person, offsets=pose, select=select))
+                    self.assertEqual(res.status_code, 200, res.get_json())
+
+                with (patch.object(server, "CHARACTER_FILES", server.CharacterFiles()),
+                      patch.object(server, "CHARACTER_LIBRARY", server.CharacterLibrary(library_dir))):
+                    first = save(pmx, r"textures\皮肤.png")
+                    second = save(fbx)
+                    self.assertEqual(first, save(pmx, "textures/皮肤.png"))
+                    self.assertFalse((library_dir / first / "files/unrelated.png").exists())
+                    assign(1, first)
+                    assign(2, first)
+                    assign(1, first, {"rootTranslation": [0.32, 0, 0]}, select=False)
+                    assign(2, first, {"rotations": {"15": [22, 0, 0]}}, select=False)
+                    assign(2, second)
+                    self.assertEqual(client.get(path, headers={"Origin": "https://example.org"}).status_code, 403)
+
+                texture.unlink()
+                pmx.unlink()
+                # Fresh objects and a different loopback origin stand in for a new app process.
+                with (patch.object(server, "CHARACTER_FILES", server.CharacterFiles()),
+                      patch.object(server, "CHARACTER_LIBRARY", server.CharacterLibrary(library_dir))):
+                    state = client.get(path, query_string=[("actor", "actor1"), ("actor", "actor2")],
+                                       base_url="http://127.0.0.1:42561").get_json()
+                    self.assertEqual({item["id"] for item in state["models"]}, {first, second})
+                    one, two = (state["actors"][f"actor{i}"] for i in (1, 2))
+                    self.assertEqual((one["id"], two["id"]), (first, second))
+                    self.assertEqual(one["poses"][first]["rootTranslation"], [0.32, 0, 0])
+                    self.assertEqual(two["poses"][first]["rotations"]["15"], [22, 0, 0])
+                    self.assertEqual([state["defaults"][str(i)]["id"] for i in (1, 2)], [first, second])
+                    choice = client.post(f"{path}/{first}/open").get_json()
+                    resource = f"/api/character-resource/{choice['ticket']}"
+                    with client.get(resource) as model, client.get(
+                            resource, query_string={"texture": "textures/皮肤.png"}) as image:
+                        self.assertEqual((model.data, image.data), (b"model one", b"referenced image"))
+                    assign(1, None)
+                    assign(1, first, {"rootTranslation": [1, 0, 0]}, select=False)
+                    state = client.get(path, query_string=[("actor", "actor1"), ("actor", "actor2")]).get_json()
+                    self.assertIsNone(state["actors"]["actor1"]["id"])
+                    self.assertIsNone(state["defaults"]["1"]["id"])
+                    self.assertEqual(state["actors"]["actor2"]["id"], second)
+
+    def test_delete_character_removes_copy_and_assignments_only(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "original"
+            source.mkdir()
+            model, texture, other = source / "角色.pmx", source / "材质.png", source / "other.fbx"
+            for path, content in ((model, b"model"), (texture, b"texture"), (other, b"other")):
+                path.write_bytes(content)
+            files = server.CharacterFiles()
+            target = root / "models/characters"
+            library = server.CharacterLibrary(target)
+            choice = files.register(str(model))
+            self.assertEqual(files.resource(choice["ticket"], texture.name), texture.resolve())
+            removed = library.save(files, choice["ticket"], "角色")["id"]
+            kept = library.save(files, files.register(str(other))["ticket"], "Other")["id"]
+            copy_ticket = library.open(removed, files)["ticket"]
+            pose = {"rotations": {"13": [0, 0, 11], "14": [0, 0, -11]}, "mirror": True}
+            library.set_actor("first", "1", removed, pose, select=True)
+            library.set_actor("first", "1", removed, pose, select=False)
+            library.set_actor("second", "2", removed, pose, select=True)
+            library.set_actor("second", "2", kept, None, select=True)
+            library.set_actor("third", "3", removed, pose, select=True)
+            self.assertEqual((target / removed / "files" / texture.name).read_bytes(), b"texture")
+
+            with (patch.object(server, "CHARACTER_FILES", files),
+                  patch.object(server, "CHARACTER_LIBRARY", library), server.app.test_client() as client):
+                url = f"/api/character-library/{removed}"
+                self.assertEqual(client.delete(url, headers={"Origin": "https://example.org"}).status_code, 403)
+                self.assertEqual(client.delete("/api/character-library/invalid").status_code, 404)
+                self.assertTrue((target / removed).is_dir())
+                reply = client.delete(url, query_string={"actor": ["first", "second", "third"]})
+                self.assertEqual(reply.status_code, 200, reply.get_json())
+                self.assertFalse(reply.json["cleanup_pending"])
+                self.assertEqual(client.get(f"/api/character-resource/{copy_ticket}").status_code, 404)
+
+            self.assertFalse((target / removed).exists())
+            self.assertEqual(list(target.glob(".removed-*")), [])
+            self.assertEqual((model.read_bytes(), texture.read_bytes(), other.read_bytes()), (b"model", b"texture", b"other"))
+            restored = server.CharacterLibrary(target).snapshot(["first", "second", "third"])
+            self.assertEqual([item["id"] for item in restored["models"]], [kept])
+            self.assertIsNone(restored["actors"]["first"]["id"])
+            self.assertIsNone(restored["actors"]["third"]["id"])
+            self.assertEqual(restored["actors"]["second"]["id"], kept)
+            self.assertNotIn(removed, restored["actors"]["second"]["poses"])
+            self.assertNotIn(removed, restored["presets"])
+            self.assertEqual(list(restored["defaults"]), ["2"])
 
 
 class HistoryTest(unittest.TestCase):

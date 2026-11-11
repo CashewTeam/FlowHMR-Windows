@@ -152,6 +152,52 @@ body { height: 100dvh; }
 .editor-menu-popup button:hover:not(:disabled) { background: var(--active); color: #fff; }
 .editor-menu-popup button:disabled { opacity: .45; cursor: default; }
 .editor-menu-popup kbd { font: inherit; color: var(--muted); }
+.viewport-header { position: relative; }
+#characterPoseMenu { position: static; }
+.character-pose-popup {
+  position: fixed; width: min(420px, calc(100vw - 16px)); min-width: 0; padding: 0;
+  box-sizing: border-box; max-height: 440px; overflow: hidden; visibility: hidden;
+}
+#characterPoseMenu[open] > .character-pose-popup { display: flex; flex-direction: column; }
+.character-pose-popup[data-positioned] { visibility: visible; }
+.pose-panel-grip {
+  display: flex; align-items: center; gap: 7px; flex: none; padding: 5px 9px;
+  background: var(--card); border-bottom: 1px solid var(--line);
+  cursor: grab; touch-action: none; user-select: none;
+}
+.pose-panel-grip svg { width: 10px; height: 13px; color: var(--muted); }
+.character-pose-popup.dragging .pose-panel-grip { cursor: grabbing; }
+.pose-panel-body { min-height: 0; padding: 8px; overflow: auto; overscroll-behavior: contain; }
+.pose-toolbar, .pose-tabs { display: flex; align-items: center; gap: 4px; }
+.pose-toolbar { justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-bottom: 8px; }
+.pose-joint-actions { display: flex; flex-wrap: wrap; gap: 2px 5px; }
+.character-pose-popup .pose-toolbar button, .character-pose-popup .pose-joint-actions button, .character-pose-popup .pose-ik-tabs button { width: auto; gap: 4px; white-space: nowrap; }
+.character-pose-popup button[aria-pressed="true"] { background: var(--active); color: #fff; }
+.pose-content { display: grid; grid-template-columns: minmax(88px, 146px) minmax(0, 1fr); gap: 10px; }
+.pose-diagram { position: relative; width: 100%; aspect-ratio: 180 / 288; border-radius: 4px; background: var(--card); }
+.pose-diagram svg { width: 100%; height: 100%; display: block; }
+.pose-diagram .pose-shape { fill: var(--line); opacity: .55; }
+.pose-diagram .pose-links { fill: none; stroke: var(--muted); stroke-width: 1.6; opacity: .75; }
+.character-pose-popup .pose-node {
+  position: absolute; width: 21px; height: 21px; padding: 0; justify-content: center; transform: translate(-50%, -50%);
+  border-radius: 50%; background: transparent; color: var(--text);
+}
+.pose-node::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 1px var(--card); }
+.pose-node[data-bone="root"]::after { border-radius: 1px; transform: rotate(45deg); width: 9px; height: 9px; }
+.pose-node.edited::after { color: #ffa955; }
+.pose-node:focus-visible { outline: 2px solid var(--active); }
+.pose-controls { min-width: 0; }
+.pose-joint-heading { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+.pose-joint-heading strong { font-size: 13px; }
+#poseMappedName { color: var(--muted); overflow-wrap: anywhere; }
+.pose-axis-group { display: grid; gap: 5px; margin-bottom: 9px; }
+.pose-axis-title { color: var(--muted); margin: 0 0 2px; font-size: 11px; }
+.pose-axis { display: grid; grid-template-columns: 14px minmax(0, 1fr) 55px; gap: 5px; align-items: center; }
+.pose-axis input[type="range"] { width: 100%; min-width: 0; accent-color: var(--active); margin: 0; }
+.pose-axis input[type="number"] { width: 100%; min-width: 0; box-sizing: border-box; padding: 3px 4px; text-align: center; appearance: textfield; }
+.pose-axis input::-webkit-inner-spin-button, .pose-axis input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.pose-hint { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.35; white-space: normal; }
+.pose-export-hint { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
 .model-dialog {
   width: min(600px, calc(100vw - 28px)); max-height: min(720px, 88dvh); padding: 0;
   border: 1px solid var(--line); border-radius: 5px; background: var(--card); color: var(--text);
@@ -199,11 +245,16 @@ body { height: 100dvh; }
 .model-import-results li[data-status="installed"] { color: var(--model-ready); }
 .model-import-results li:is([data-status="invalid"], [data-status="conflict"], [data-status="failed"]) { color: var(--model-warning); }
 .fbx-export-dialog {
-  width: min(320px, calc(100vw - 32px)); padding: 14px;
+  width: min(365px, calc(100vw - 32px)); padding: 14px;
   border: 1px solid var(--line); border-radius: 4px; background: var(--card); color: var(--text);
 }
 .fbx-export-dialog::backdrop { background: #0008; }
 .fbx-export-dialog .card-title { margin-bottom: 12px; }
+.fbx-export-format { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.fbx-export-format .input { flex: 1; }
+.export-format-hint { margin: 6px 0 10px; }
+.fbx-template .input { width: 100%; }
+#motionExportError { margin-top: 10px; }
 .fbx-export-skin { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .fbx-export-skin input { accent-color: var(--active); }
 .fbx-export-pose { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; font-size: 13px; }
@@ -213,6 +264,17 @@ body { height: 100dvh; }
 .fbx-export-person { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; }
 .fbx-export-person input { accent-color: var(--active); }
 .fbx-export-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.character-file { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 8px; }
+.character-file select { flex: 1 1 180px; min-width: 0; }
+.character-selection { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0 6px; font-size: 13px; }
+.character-selection .input { flex: 1; min-width: 0; }
+.character-selection > :is(span, label) { color: var(--muted); white-space: nowrap; }
+.character-remove { flex: none; }
+.character-remove:hover:not(:disabled) { color: var(--red); border-color: var(--red); }
+.character-delete-confirm { padding: 8px 10px; margin: 5px 0 8px; background: var(--card); border: 1px solid var(--line); border-radius: 4px; }
+.character-delete-confirm .setting-help { margin: 0; }
+.character-delete-confirm .fbx-export-actions { margin-top: 8px; }
+.pose-person { margin: 0 0 7px; }
 .body-variant { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .body-variant .input { padding: 2px 4px; font-size: 11px; }
 .ground-popup { width: 205px; padding: 8px; }

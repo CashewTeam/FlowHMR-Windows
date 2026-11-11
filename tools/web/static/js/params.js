@@ -41,6 +41,7 @@ export function initParams(defaults, manualBatchDefault) {
   const defaultCamera = cameraModeFor(defaults || {});
   let preferredCamera = null;
   const footLockPreset = $("optFootLockPreset");
+  const defaultFootLock = footLockPreset.value;
   const correctionGround = $("optCorrectionGround"), correctionHeight = $("optCorrectionHeight");
   const seed = $("optSeed"), cfg = $("optCfg"), stride = $("optVggt");
   const steps = $("optSteps"), samChunk = $("optSamChunk");
@@ -108,9 +109,9 @@ export function initParams(defaults, manualBatchDefault) {
     hamer.set(!hamerButton.disabled && !!p.hamer);
     hamerStride.value = p.hamer_stride ?? 1;
     syncHamer();
-    soleFit.value = p.sole_fit_strength ?? (p.sole_fit ? 0.6 : 0);
+    soleFit.value = p.sole_fit_strength ?? (p.sole_fit == null ? soleFit.defaultValue : p.sole_fit ? 0.6 : 0);
     syncSoleFitSlider();
-    footLockPreset.value = p.correction_preset === "strong" ? "strong" : "normal";
+    footLockPreset.value = (p.correction_preset ?? defaultFootLock) === "strong" ? "strong" : "normal";
     correctionGround.value = p.correction_floor_m == null ? "auto" : "manual";
     correctionHeight.value = p.correction_floor_m ?? correction?.floor_m?.toFixed(3) ?? 0;
     autoBatch.set(p.sam_chunk_size == null);
@@ -119,7 +120,7 @@ export function initParams(defaults, manualBatchDefault) {
     cfg.value = p.cfg_scale ?? 1.0;
     stride.value = p.vggt_interval > 0 ? p.vggt_interval : prefs?.manualInterval ?? 10;
     steps.value = p.steps ?? 20;
-    const savedFrames = Number(p.smoothing_frames ?? 0);
+    const savedFrames = Number(p.smoothing_frames ?? Number(smoothing.defaultValue) * MAX_SMOOTHING_FRAMES);
     // Keep the saved frame value until edited, even when its strength is rounded for display.
     restoredSmoothingFrames = Number.isFinite(savedFrames) ? Math.min(MAX_SMOOTHING_FRAMES, Math.max(0, savedFrames)) : 0;
     smoothing.value = Number((restoredSmoothingFrames / MAX_SMOOTHING_FRAMES).toPrecision(4));

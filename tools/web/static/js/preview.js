@@ -49,7 +49,8 @@ export function initPreview(bus) {
     origin = null;
   }
 
-  function loadSource(src) {
+  function loadSource(src, retry = false) {
+    video.dispatchEvent(new CustomEvent("flowhmr:sourcechanging", { detail: { retry } }));
     resetClock();
     video.src = src;
     video.load();
@@ -90,7 +91,7 @@ export function initPreview(bus) {
     retries += 1;
     clearTimeout(retryTimer);
     retryTimer = setTimeout(() => {
-      loadSource(`${baseSrc}${baseSrc.includes("?") ? "&" : "?"}r=${Date.now()}`);
+      retryPlayback();
     }, 1500);
   });
   video.addEventListener("loadedmetadata", () => {
@@ -104,6 +105,15 @@ export function initPreview(bus) {
   function showPreviewIssue(message) {
     setText($("previewIssue"), message);
     show("previewIssue", !!message);
+  }
+
+  function retryPlayback() {
+    if (!baseSrc) return false;
+    clearTimeout(retryTimer);
+    const src = baseSrc === localUrl ? baseSrc
+      : `${baseSrc}${baseSrc.includes("?") ? "&" : "?"}r=${Date.now()}`;
+    loadSource(src, true);
+    return true;
   }
 
   function clear() {
@@ -301,8 +311,8 @@ export function initPreview(bus) {
 
   return {
     showLocal(file) { tracks = []; setSource(URL.createObjectURL(file), { local: true }); setText($("previewTitle"), file.name); },
-    showJob(url, name, { refresh = false } = {}) {
-      if (baseSrc !== url || refresh) setSource(url);
+    showJob(url, name) {
+      if (baseSrc !== url) setSource(url);
       setText($("previewTitle"), name);
     },
     setTrack(t) { tracks = t ? [t] : []; refreshOverlay(); },
@@ -310,6 +320,8 @@ export function initPreview(bus) {
     clear,
     video,
     clock,
+    retryPlayback,
+    showPreviewIssue,
     get temporaryMute() { return muteBeforePicking !== null; },
   };
 }

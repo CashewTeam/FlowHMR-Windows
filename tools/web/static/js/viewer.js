@@ -5,6 +5,8 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { $, show, personColor } from "./utils.js";
 import { appError, message as m, setAttr, setText, t } from "./i18n.js";
 import * as api from "./api.js";
+import { initPreviewCharacter } from "./preview-character.js";
+import { initPoseEditor } from "./pose-editor.js";
 
 const BODY_STORAGE = "flowhmr-body-variant";
 const MOUSE_MODE_STORAGE = "flowhmr-mouse-mode";
@@ -126,7 +128,8 @@ export function initViewer(preview) {
 
   // Soft studio lighting: sky/ground ambient, a front-top key light that casts the floor
   // shadow (it follows the body, see setFrame), a cool fill from the side and a rim light.
-  scene.add(new THREE.HemisphereLight(0xf5f7ff, 0xc8ccd8, 1.4));
+  const ambient = new THREE.HemisphereLight(0xf5f7ff, 0xc8ccd8, 1.4);
+  scene.add(ambient);
   const sun = new THREE.DirectionalLight(0xffffff, 1.9);
   const SUN_OFFSET = new THREE.Vector3(-2.2, 6, 3.6);  // front-left: shadow falls back-right
   sun.position.copy(SUN_OFFSET);
@@ -141,6 +144,14 @@ export function initViewer(preview) {
   scene.add(fill, rim);
   Object.assign(sun.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 0.5, far: 20 });
   scene.add(sun, sun.target);
+
+  function syncCharacterLighting() {
+    const custom = !!character.active;
+    ambient.intensity = custom ? .62 : 1.4;
+    sun.intensity = custom ? 1.42 : 1.9;
+    fill.intensity = custom ? .28 : .55;
+    rim.intensity = custom ? .45 : .7;
+  }
 
   // Editor grid over the shadow plane, with the two horizontal world axes.
   const FLOOR_SIZE = 200;
@@ -187,6 +198,19 @@ export function initViewer(preview) {
     jobId: null, meta: null, scene: null, bodyVariant: "neutral", frame: 0, playing: false, speed: 1, lastT: 0, acc: 0,
     prevRoot: new THREE.Vector3(),
   };
+  const poseMenu = $("characterPoseMenu");
+  const poseEditor = initPoseEditor((entry, settings) => {
+    character.editPose(entry, settings);
+    drawActorFrame(entry.actor, state.frame);
+    renderer.shadowMap.needsUpdate = true;
+    invalidate();
+  }, (id) => character.focus(id));
+  poseMenu.addEventListener("toggle", () => syncSkeletonDisplay());
+  const character = initPreviewCharacter(() => actors, () => {
+    poseEditor.setActors(actors, character.focused?.id);
+    syncSkeletonDisplay();
+    labelBody();
+  }, (error) => setText($("viewportObject"), error));
 
   function updateOrthographic() {
     const halfHeight = camera.position.distanceTo(controls.target) * Math.tan(THREE.MathUtils.degToRad(perspective.fov / 2));
@@ -298,16 +322,28 @@ export function initViewer(preview) {
   setMouseMode(localStorage.getItem(MOUSE_MODE_STORAGE) === "rotate" ? "rotate" : "pan");
   $("toggleGrid").onclick = (event) => {
     floor.visible = axisLines.visible = !floor.visible;
-    shadowPlane.visible = floor.visible && (!actors.length || actors.some(({ body }) => body.visible));
+    shadowPlane.visible = floor.visible && (!actors.length || actors.some(({ body, character }) => (character?.mesh ?? body).visible));
     event.currentTarget.setAttribute("aria-pressed", String(floor.visible));
     invalidate();
   };
+  function syncCharacterWire(root) {
+    root?.traverse((object) => {
+      if (!object.isMesh) return;
+      for (const material of [].concat(object.material)) {
+        if (!material || material.wireframe === bodyMat.wireframe) continue;
+        material.wireframe = bodyMat.wireframe;
+        material.needsUpdate = true;
+      }
+    });
+  }
+
   wireToggle.onclick = (event) => {
     bodyMat.wireframe = !bodyMat.wireframe;
     bodyMat.needsUpdate = true;
-    for (const { body } of actors) {
+    for (const { body, character } of actors) {
       body.material.wireframe = bodyMat.wireframe;
       body.material.needsUpdate = true;
+      syncCharacterWire(character?.mesh);
     }
     event.currentTarget.setAttribute("aria-pressed", String(bodyMat.wireframe));
     setText($("viewportMode"), m(bodyMat.wireframe ? "view.wire_preview" : "view.solid"));
@@ -316,6 +352,7 @@ export function initViewer(preview) {
   };
 
   function removeActors() {
+    character.releaseActors(actors);
     for (const actor of actors) {
       removeSkeleton(actor);
       scene.remove(actor.group);
@@ -323,6 +360,9 @@ export function initViewer(preview) {
       if (actor.body.material !== bodyMat) actor.body.material.dispose();
     }
     actors = [];
+    show("previewCharacter", false);
+    poseEditor.setActors([]);
+    window.dispatchEvent(new Event("flowhmr:characterchange"));
   }
 
   function setGround(height) {
@@ -399,11 +439,23 @@ export function initViewer(preview) {
 
   const boneAxis = new THREE.Vector3(0, 0, 1), boneHead = new THREE.Vector3(), boneDirection = new THREE.Vector3();
   const boneScale = new THREE.Vector3(), boneRotation = new THREE.Quaternion(), boneMatrix = new THREE.Matrix4();
+  const inverseActor = new THREE.Matrix4();
   function drawSkeletonFrame(actor, frame) {
     const { skeleton } = actor;
     if (!skeleton?.group.visible) return;
-    const { points, lines, cones, stride, joints, edges } = skeleton;
-    points.array.set(joints.subarray(frame * stride, (frame + 1) * stride));
+    const { points, lines, cones, stride, joints, edges, parents } = skeleton;
+    if (poseMenu.open && actor.character) {
+      const { asset, mesh, rig } = actor.character;
+      const bones = asset.kind === "fbx" ? asset.getRig(mesh).bones : mesh.skeleton.bones;
+      actor.group.updateWorldMatrix(true, false);
+      mesh.updateMatrixWorld(true);
+      inverseActor.copy(actor.group.matrixWorld).invert();
+      for (let j = 0; j < parents.length; j++) {
+        const bone = bones[rig.sourceToTarget[j]];
+        if (bone) boneHead.setFromMatrixPosition(bone.matrixWorld).applyMatrix4(inverseActor).toArray(points.array, j * 3);
+        else if (parents[j] >= 0) points.array.copyWithin(j * 3, parents[j] * 3, parents[j] * 3 + 3);
+      }
+    } else points.array.set(joints.subarray(frame * stride, (frame + 1) * stride));
     points.needsUpdate = true;
     if (cones.visible) {
       let count = 0;
@@ -428,6 +480,7 @@ export function initViewer(preview) {
   }
 
   function syncSkeletonDisplay() {
+    syncCharacterLighting();
     const ready = actors.some((a) => a.skeleton);
     const only = ready && !showSkin;
     const visible = ready && (only || showSkeletonOverlay);
@@ -439,8 +492,15 @@ export function initViewer(preview) {
     shadowPlane.visible = floor.visible && !only;
     wireToggle.disabled = only;
     setText($("viewportMode"), m(only ? "view.skeleton_only" : bodyMat.wireframe ? "view.wire_preview" : "view.solid"));
+    setAttr($("skeletonOverlayLabel"), "title", m(character.active
+      ? poseMenu.open ? "pose.target_overlay" : "character.skeleton" : "view.skeleton_hint"));
     for (const actor of actors) {
-      actor.body.visible = !only || !actor.skeleton;
+      const mesh = actor.character?.mesh;
+      actor.body.visible = !mesh && (!only || !actor.skeleton);
+      if (mesh) {
+        mesh.visible = !only || !actor.skeleton;
+        syncCharacterWire(mesh);
+      }
       if (actor.skeleton) {
         const { group, bones, cones, jointMarkers } = actor.skeleton;
         group.visible = visible;
@@ -481,7 +541,7 @@ export function initViewer(preview) {
     const group = new THREE.Group();
     group.add(bones, joints, cones);
     actor.group.add(group);
-    actor.skeleton = { group, points, lines, bones, cones, jointMarkers: joints, stride, joints: info.joints, edges };
+    actor.skeleton = { group, points, lines, bones, cones, jointMarkers: joints, stride, joints: info.joints, edges, parents };
     syncSkeletonDisplay();
   }
   skeletonToggle.addEventListener("change", () => {
@@ -518,6 +578,11 @@ export function initViewer(preview) {
     const f = actorFrame(actor, globalFrame);
     group.visible = globalFrame >= 0 && f >= 0 && f < meta.num_frames;
     if (!group.visible) return;
+    if (actor.character) {
+      if (actor.character.mesh.visible || (poseMenu.open && actor.skeleton?.group.visible)) actor.character.rig.apply(f);
+      drawSkeletonFrame(actor, f);
+      return;
+    }
     drawSkeletonFrame(actor, f);
     if (!body.visible) return;
     const pos = body.geometry.attributes.position;
@@ -610,22 +675,48 @@ export function initViewer(preview) {
   }
 
   // ---------------------------------------------------------------- video sync
+  const syncToggle = $("optSync");
+  const media = { time: NaN, lastMove: 0, retried: false, fallback: false, play: null };
+  const mediaEnabled = () => state.meta && syncToggle.checked && !!video.getAttribute("src");
+  const resetMediaWatch = () => { media.time = NaN; media.lastMove = performance.now(); };
   const videoTimeFor = (f) => clock.timeOf((state.meta.track_start || 0) + f + 0.5, state.meta.fps);
   const videoFrame = () => clock.frameAt(video.currentTime, state.meta.fps) - (state.meta.track_start || 0);
+  function playVideo() {
+    if (!video.paused || media.play) return;
+    const pending = media.play = video.play();
+    pending.catch(() => {}).finally(() => { if (media.play === pending) media.play = null; });
+  }
+
+  function seekVideo(frame) {
+    const time = videoTimeFor(frame);
+    video.currentTime = Number.isFinite(video.duration) ? Math.min(time, video.duration) : time;
+    resetMediaWatch();
+  }
+
   function syncVideo(force) {
-    if (!state.meta || !$("optSync").checked || !video.src || video.readyState < 1 || !clock.ready) return;
-    const t = videoTimeFor(state.frame);
+    if (!mediaEnabled() || media.fallback || video.readyState < 1 || !clock.ready) return;
+    const different = Math.abs(video.currentTime - videoTimeFor(state.frame));
     if (state.playing) {
       video.playbackRate = state.speed;
-      if (force || Math.abs(video.currentTime - t) > 0.15) video.currentTime = t;
-      if (video.paused) video.play().catch(() => {});
+      if (force || different > 0.15) seekVideo(state.frame);
+      playVideo();
     } else {
       if (!video.paused) video.pause();
-      if (force || Math.abs(video.currentTime - t) > 0.02) video.currentTime = t;
+      if (force || different > 0.02) seekVideo(state.frame);
     }
   }
+
+  function resetMediaSync() {
+    if (media.fallback) preview.showPreviewIssue("");
+    media.fallback = media.retried = false;
+    resetMediaWatch();
+  }
+
   function setPlaying(p, driveVideo = true) {
-    if (state.playing !== p) state.acc = state.lastT = 0;
+    if (state.playing !== p) {
+      state.acc = state.lastT = 0;
+      resetMediaWatch();
+    }
     state.playing = p;
     $("iconPlay").classList.toggle("hidden", p);
     $("iconPause").classList.toggle("hidden", !p);
@@ -633,30 +724,40 @@ export function initViewer(preview) {
     invalidate();
   }
 
-  video.addEventListener("loadedmetadata", () => syncVideo(true));
+  video.addEventListener("flowhmr:sourcechanging", ({ detail }) => {
+    media.play = null;
+    if (!detail.retry) resetMediaSync(); else resetMediaWatch();
+  });
   video.addEventListener("flowhmr:clockready", () => syncVideo(true));
+  // Browsers without requestVideoFrameCallback use the zero-origin clock.
+  video.addEventListener("loadedmetadata", () => syncVideo(true));
   video.addEventListener("play", () => {
-    if (!state.meta || !$("optSync").checked || !clock.ready) return;
+    if (!mediaEnabled() || !clock.ready || video.paused || state.playing) return;
+    resetMediaSync();
     const next = videoFrame();
     if (next < 0 || next >= state.meta.num_frames) {
       setFrame(0);
-      video.currentTime = videoTimeFor(0);
+      seekVideo(0);
     } else setFrame(next);
     video.playbackRate = state.speed;
     setPlaying(true, false);
   });
   video.addEventListener("pause", () => {
-    if (!state.meta || !$("optSync").checked || video.ended || !state.playing || !clock.ready) return;
+    if (!mediaEnabled() || media.fallback || !video.paused || video.error || video.ended
+        || !state.playing || !clock.ready) return;
     setFrame(videoFrame());
     setPlaying(false, false);
   });
   video.addEventListener("seeked", () => {
-    if (state.meta && $("optSync").checked && !state.playing && clock.ready) setFrame(videoFrame());
+    if (mediaEnabled() && !state.playing && clock.ready) setFrame(videoFrame());
   });
 
   $("btnPlay").onclick = () => {
     if (!state.meta) return;
-    if (!state.playing && state.frame >= state.meta.num_frames - 1) setFrame(0);
+    if (!state.playing) {
+      resetMediaSync();
+      if (state.frame >= state.meta.num_frames - 1) setFrame(0);
+    }
     setPlaying(!state.playing);
   };
   function jumpTo(frame) {
@@ -683,7 +784,8 @@ export function initViewer(preview) {
   };
   $("btnReset").onclick = resetView;
   rememberToggle($("optFollow"), "flowhmr-follow");
-  rememberToggle($("optSync"), "flowhmr-sync-video", (enabled) => {
+  rememberToggle(syncToggle, "flowhmr-sync-video", (enabled) => {
+    resetMediaSync();
     if (enabled) syncVideo(true); else video.pause();
   });
   const audioToggle = $("optAudio");
@@ -696,33 +798,64 @@ export function initViewer(preview) {
     saveAudio();
   });
   window.addEventListener("keydown", (e) => {
-    if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+    const target = e.target;
+    if (e.defaultPrevented || e.isComposing || !(target instanceof Element)) return;
+    if (e.code === "Space") {
+      const timelineControl = target.matches('.timeline-editor input[type="range"], #controls .transport, #btnPlay');
+      if (!state.meta || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || target.isContentEditable
+          || document.querySelector("dialog[open]")
+          || (!timelineControl && target.closest("input, select, textarea, button, summary, a[href]"))) return;
+      e.preventDefault();
+      if (!e.repeat) $("btnPlay").click();
+      return;
+    }
+    if (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)) return;
     if (e.code === "Numpad1") { e.preventDefault(); setView(e.ctrlKey ? "back" : "front"); }
     if (e.code === "Numpad3") { e.preventDefault(); setView(e.ctrlKey ? "left" : "right"); }
     if (e.code === "Numpad7") { e.preventDefault(); setView(e.ctrlKey ? "bottom" : "top"); }
     if (e.code === "Numpad5") { e.preventDefault(); toggleProjection(); }
     if (e.code === "Home") { e.preventDefault(); resetView(); }
     if (!state.meta) return;
-    if (e.code === "Space" && !["BUTTON", "SUMMARY"].includes(e.target.tagName)) { e.preventDefault(); $("btnPlay").click(); }
     if (e.code === "ArrowRight") { e.preventDefault(); jumpTo(state.frame + 1); }
     if (e.code === "ArrowLeft") { e.preventDefault(); jumpTo(state.frame - 1); }
   });
+
+  function tickMedia(t) {
+    if (clock.ready && video.readyState >= 1 && !video.seeking && (!video.paused || video.ended)) {
+      const time = video.currentTime;
+      if (!Number.isFinite(media.time) || Math.abs(media.time - time) > .001) {
+        media.time = time;
+        media.lastMove = t;
+      }
+      const next = videoFrame();
+      if (video.ended || next >= state.meta.num_frames) {
+        if ($("optFollow").checked) recenterOnFrame(0);
+        setFrame(0);
+        seekVideo(0);
+        playVideo();
+        return;
+      }
+      if (next >= 0 && next !== state.frame) setFrame(next);
+    }
+    // A stalled decoder can report paused=false indefinitely. Give the same
+    // source one fresh load at the current frame, then keep the motion usable.
+    if (t - media.lastMove < 1200) return;
+    if (!media.retried && preview.retryPlayback()) {
+      media.retried = true;
+      return;
+    }
+    media.fallback = true;
+    video.pause();
+    preview.showPreviewIssue(m("source.sync_stalled"));
+  }
 
   function tick(t) {
     renderRequest = 0;
     const dt = state.lastT ? (t - state.lastT) / 1000 : 0;
     state.lastT = t;
     if (state.playing && state.meta) {
-      if ($("optSync").checked && clock.ready && video.readyState >= 1 && (!video.paused || video.ended)) {
-        state.acc = 0;
-        const next = videoFrame();
-        if (video.ended || next >= state.meta.num_frames) {
-          if ($("optFollow").checked) recenterOnFrame(0);
-          setFrame(0);
-          video.currentTime = videoTimeFor(0);
-          video.play().catch(() => {});
-        } else if (next >= 0 && next !== state.frame) setFrame(next);
-      } else {
+      if (mediaEnabled() && !media.fallback) tickMedia(t);
+      else {
         state.acc += dt * state.meta.fps * state.speed;
         if (state.acc >= 1) {
           const steps = Math.floor(state.acc);
@@ -733,7 +866,6 @@ export function initViewer(preview) {
             if ($("optFollow").checked) recenterOnFrame(0);
           }
           setFrame(next);
-          syncVideo(false);
         }
       }
     }
@@ -753,9 +885,14 @@ export function initViewer(preview) {
 
   // ---------------------------------------------------------------- public API
   function labelBody() {
+    const custom = actors.filter((actor) => actor.character).length;
+    const asset = character.active;
     setText($("viewportObject"), () => [
       t("view.scene"),
-      [state.scene ? t("person.count", { count: actors.length }) : "", "SMPL-H", t(`view.${state.bodyVariant}`)].filter(Boolean).join(" · "),
+      [state.scene ? t("person.count", { count: actors.length }) : "",
+        ...(custom > 1 ? [t("character.custom_count", { count: custom })]
+          : asset ? [({ mixamo: "Mixamo", metahuman: "MetaHuman" })[asset.profile] ?? "PMX", asset.name]
+            : ["SMPL-H", t(`view.${state.bodyVariant}`)])].filter(Boolean).join(" · "),
     ].join(" | "));
   }
 
@@ -790,7 +927,7 @@ export function initViewer(preview) {
     group.name = multiple ? `person-${person.person}` : "motion-actor";
     group.add(body);
     scene.add(group);
-    return { id: person.id, meta, verts: new Uint16Array(vertices), body, group, skeleton: null,
+    return { id: person.id, number: person.person, meta, verts: new Uint16Array(vertices), body, group, skeleton: null, character: null,
       cos: Math.cos(yaw), sin: Math.sin(yaw) };
   }
 
@@ -839,6 +976,24 @@ export function initViewer(preview) {
   });
 
   return {
+    openCharacter: character.open,
+    getPmxActors(people) {
+      const selected = new Set(people.map(String));
+      const targets = actors.filter((actor) => !state.scene || selected.has(String(actor.number)));
+      if ((state.scene && targets.length !== selected.size) ||
+          targets.some((actor) => !actor.character || actor.character.asset.kind === "fbx")) return [];
+      return targets.map((actor) => ({
+        person: actor.number,
+        start: state.scene ? sourceStart(actor.meta) : 0,
+        sceneEnd: state.scene ? sourceStart(state.meta) + state.meta.num_frames - 1 : null,
+        fps: actor.meta.fps,
+        yaw: actor.group.rotation.y,
+        offset: actor.group.position.toArray(),
+        asset: actor.character.asset,
+        motion: actor.character.motion,
+        poseOffsets: actor.character.poseOffsets,
+      }));
+    },
     setBodyVariants(names = ["neutral"], preferred = "neutral") {
       const available = new Set(names);
       for (const option of bodySelect.options) option.disabled = !available.has(option.value);
@@ -892,6 +1047,7 @@ export function initViewer(preview) {
       state.frame = -1;
       state.acc = 0;
       state.lastT = 0;
+      resetMediaSync();
       state.bodyVariant = bodySelect.value = variant === "source"
         ? groupScene?.body_reference ?? data[0].meta.body_reference ?? "neutral" : variant;
       bodySelect.disabled = false;
@@ -916,6 +1072,7 @@ export function initViewer(preview) {
       setFrame(0);
       frameDefaultView();
       setPlaying(false);
+      void character.showForJob();
       void Promise.all(inspections).then((results) => {
         if (!load.signal.aborted && state.jobId === jobId) results.forEach((info, i) => setInspection(actors[i], info));
         if (loadController === load) loadController = null;

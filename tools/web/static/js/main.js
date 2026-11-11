@@ -1,5 +1,5 @@
 // Page controller: wires the cards together and polls the current job.
-import { $, show, el, createBus, jobLabel, personColor } from "./utils.js";
+import { $, show, createBus, jobLabel } from "./utils.js";
 import { appError, message as m, setText, setupLocalization } from "./i18n.js";
 import * as api from "./api.js";
 import { initUpload } from "./upload.js";
@@ -13,6 +13,7 @@ import { initLayout } from "./layout.js";
 import { initTrim } from "./trim.js";
 import { initModelDialog } from "./models.js";
 import { initRuntimeDialog } from "./runtime.js";
+import { initMotionExport } from "./motion-export.js";
 
 setupLocalization();
 const themeOptions = $("themeOptions");
@@ -51,69 +52,23 @@ let paramsShownFor = null;
 let restoreParameterDraft = false;
 let submitting = false;
 let pollVersion = 0;
-let lastStatus = null;
 let historyStamp = "";
 const ACTIVE = new Set(["queued", "running", "waiting_user", "cancel_requested"]);
 
 const upload = initUpload(bus);
-const fbxDialog = $("fbxExportDialog");
-const fbxWithSkin = $("fbxWithSkin");
-const fbxFirstPose = $("fbxFirstPose");
-const fbxPeople = $("fbxPeople"), fbxConfirm = $("fbxConfirm");
-let exportPeople = [];
-const FBX_SKIN_STORAGE = "flowhmr-fbx-with-skin";
-const FBX_POSE_STORAGE = "flowhmr-fbx-first-pose";
-fbxWithSkin.checked = localStorage.getItem(FBX_SKIN_STORAGE) === "on";
-const savedFbxPose = localStorage.getItem(FBX_POSE_STORAGE);
-fbxFirstPose.value = ["t", "a"].includes(savedFbxPose) ? savedFbxPose : "none";
-function setExportPeople(scene) {
-  exportPeople = (scene?.people ?? []).map(({ person }) => {
-    const label = el("label", "fbx-export-person");
-    const input = el("input");
-    const dot = el("span", "person-dot");
-    dot.style.background = personColor(person - 1);
-    input.type = "checkbox";
-    input.value = person;
-    input.checked = true;
-    label.append(input, dot, el("span", "", m("person.number", { number: person })));
-    return { label, input };
-  });
-  $("fbxPeopleList").replaceChildren(...exportPeople.map(({ label }) => label));
-  show(fbxPeople, !!exportPeople.length);
-  fbxConfirm.disabled = false;
-}
-fbxPeople.addEventListener("change", () => { fbxConfirm.disabled = !exportPeople.some(({ input }) => input.checked); });
-$("dlFbx").onclick = () => {
-  if (!currentJob || loadedResult !== currentJob || fbxDialog.open) return;
-  fbxDialog.returnValue = "";
-  fbxDialog.showModal();
-};
-fbxDialog.querySelector("form").addEventListener("submit", (event) => {
-  if (event.submitter !== fbxConfirm) return;
-  event.preventDefault();
-  if (!currentJob || loadedResult !== currentJob) return;
-  const people = exportPeople.filter(({ input }) => input.checked).map(({ input }) => input.value);
-  if (exportPeople.length && !people.length) return;
-  localStorage.setItem(FBX_SKIN_STORAGE, fbxWithSkin.checked ? "on" : "off");
-  localStorage.setItem(FBX_POSE_STORAGE, fbxFirstPose.value);
-  const link = document.createElement("a");
-  link.href = api.fbxUrl(currentJob, fbxWithSkin.checked, viewer.bodyVariant, people, fbxFirstPose.value);
-  link.download = "";
-  fbxDialog.close("export");
-  link.click();
-});
-for (const [menu, target] of [["menuImport", "fileInput"], ["menuFbx", "dlFbx"], ["menuNpz", "dlNpz"]]) {
+for (const [menu, target] of [["menuImport", "fileInput"], ["menuNpz", "dlNpz"]]) {
   $(menu).onclick = () => $(target).click();
 }
 document.addEventListener("click", (event) => {
   for (const menu of document.querySelectorAll(".editor-menu[open]")) {
-    if (!menu.contains(event.target) || event.target.closest(".editor-menu-popup button")) menu.open = false;
+    if (!menu.contains(event.target) || (!menu.hasAttribute("data-keep-open") && event.target.closest(".editor-menu-popup button"))) menu.open = false;
   }
 });
 const progress = initProgress();
 const person = initPersonSelect(bus);
 const preview = initPreview(bus);
 const viewer = initViewer(preview);
+const motionExport = initMotionExport(() => viewer.bodyVariant, viewer);
 const trim = initTrim({ ...preview, seek: viewer.seekSourceFrame });
 const history = initHistory({ onOpen: openJob, onRerun: rerun, onDeleted: clearDeletedJobs });
 const runtime = initRuntimeDialog();
@@ -272,14 +227,10 @@ async function rerun(jobId, overrides = {}) {
 }
 
 function resetJobView() {
-  if (fbxDialog.open) fbxDialog.close("cancel");
-  setExportPeople(null);
-  $("dlFbx").disabled = $("menuFbx").disabled = true;
-  show("dlFbx", false);
+  motionExport.clear();
   clearTimeout(pollTimer);
   pollVersion++;
   currentJob = null;
-  lastStatus = null;
   historyStamp = "";
   loadedResult = null;
   person.reset();
@@ -347,12 +298,10 @@ async function poll() {
     : job.scene_state === "running" ? "job.scene_aligning"
     : job.loading_models ? "job.model_loading"
     : "job.generating"));
-  const videoChanged = ["waiting_user", "done"].includes(job.status) && lastStatus !== job.status;
-  preview.showJob(api.videoUrl(id), () => jobLabel(job), { refresh: videoChanged });
+  preview.showJob(api.videoUrl(id, job.has_preview_video), () => jobLabel(job));
   person.update(job);
   trim.setSource(job.source_frames);
   trim.setEditable(!ACTIVE.has(job.status));
-  lastStatus = job.status;
   if (paramsShownFor !== id) {
     params.openJob(id, job.params, job.correction, restoreParameterDraft);
     trim.apply(job.params);
@@ -366,11 +315,9 @@ async function poll() {
   } else if (job.status === "done" && loadedResult !== id) {
     loadedResult = id;
     params.suggestCorrectionHeight(job.correction);
-    setExportPeople(job.scene);
+    motionExport.setResult(id, job);
     $("dlNpz").href = api.npzUrl(id);
-    $("dlFbx").disabled = $("menuFbx").disabled = !job.has_fbx;
     $("menuNpz").disabled = false;
-    show("dlFbx", job.has_fbx);
     show("dlNpz", true);
     try {
       const meta = await viewer.load(id, job.scene);

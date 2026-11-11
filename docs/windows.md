@@ -1,6 +1,6 @@
 # FlowHMR Windows 桌面版
 
-适用于 64 位 Windows 10 / 11。基础包带 Python 3.10 和界面依赖，可以直接打开软件。生成前需按显卡安装推理环境：NVIDIA 使用 CUDA，AMD RX 9070 系列等 `gfx1201` 显卡可在 Windows 11 上尝试 [ROCm 实验环境](amd-rocm.md)。
+适用于 64 位 Windows 10 / 11。基础包带 Python 3.10 和界面依赖，可以直接打开软件。生成前需按显卡安装推理环境：NVIDIA 使用 CUDA，AMD Radeon RX 9000 系列中的 `gfx1201` 型号可在 Windows 11 上尝试 [ROCm 实验环境](amd-rocm.md)。
 
 1. 下载 [发布说明](release-windows.md)中的 `FlowHMR-Windows.zip`，完整解压到一个有写入权限的目录。
 2. 在解包后的 `FlowHMR` 文件夹里双击 `FlowHMR.exe`。程序使用独立窗口，不需要用浏览器。缺少 WebView2 或 VC++ 运行库时，程序会运行包里的微软安装程序。

@@ -65,19 +65,78 @@ export async function getInspection(id, signal) {
   const info = JSON.parse(response.headers.get("X-FlowHMR-Inspection"));
   return { ...info, joints: new Float32Array(await response.arrayBuffer()) };
 }
+export async function getCharacterMotion(id, signal) {
+  const response = await request(`/api/jobs/${id}/pmx-motion`, { signal });
+  const meta = JSON.parse(response.headers.get("X-FlowHMR-PMX-Motion"));
+  const data = new Float32Array(await response.arrayBuffer());
+  const xyz = 52 * 3;
+  const jointsEnd = xyz * (meta.frames + 1);
+  const rotationsEnd = jointsEnd + meta.frames * 52 * 4;
+  const contactEnd = rotationsEnd + meta.frames * 4;
+  if (!Number.isInteger(meta.frames) || meta.frames < 1 || !Number.isFinite(meta.floor)
+      || data.length !== contactEnd + (meta.hasSoles ? meta.frames * 4 : 0) || meta.parents?.length !== 52) {
+    throw appError("server.pmx_motion");
+  }
+  return { ...meta, rest: data.subarray(0, xyz), joints: data.subarray(xyz, jointsEnd),
+    quaternions: data.subarray(jointsEnd, rotationsEnd), contacts: data.subarray(rotationsEnd, contactEnd),
+    soles: meta.hasSoles ? data.subarray(contactEnd) : null };
+}
+export function characterResourceUrl(ticket, texture) {
+  const base = `/api/character-resource/${encodeURIComponent(ticket)}`;
+  return texture == null ? base : `${base}?${new URLSearchParams({ texture })}`;
+}
+export async function getCharacterFile({ ticket, name }, signal) {
+  const response = await request(characterResourceUrl(ticket), { signal, cache: "no-store" });
+  return new File([await response.blob()], name);
+}
+export async function getCharacterTexture(ticket, texture, signal) {
+  const response = await fetch(characterResourceUrl(ticket, texture), { signal, cache: "no-store", redirect: "error" });
+  return response.ok ? new File([await response.blob()], texture.split(/[\\/]/).at(-1)) : null;
+}
+const characterActorsQuery = (actors) => new URLSearchParams(actors.map((actor) => ["actor", actor.id]));
+export const getCharacterLibrary = (actors, signal) => json(`/api/character-library?${characterActorsQuery(actors)}`,
+  { signal, cache: "no-store" });
+export const saveLibraryCharacter = (ticket, name) => postJson("/api/character-library", { ticket, name });
+export const openLibraryCharacter = (id, signal) => json(`/api/character-library/${encodeURIComponent(id)}/open`,
+  { method: "POST", signal });
+export const deleteLibraryCharacter = (id, actors) => json(
+  `/api/character-library/${encodeURIComponent(id)}?${characterActorsQuery(actors)}`, { method: "DELETE" });
+export const saveActorCharacter = (actor, id, offsets, select) => json(
+  `/api/character-library/actors/${encodeURIComponent(actor.id)}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, keepalive: !select,
+    body: JSON.stringify({ id, offsets, select, person: actor.number ?? null }),
+  });
 export const selectPeople = (id, people) => postJson(`/api/jobs/${id}/select`,
   people.length === 1 ? { people, person: people[0] } : { people });
 export const rerunJob = (id, params) => postJson(`/api/jobs/${id}/rerun`, params).then((res) => res.job_id);
 export const cancelJob = (id) => postJson(`/api/jobs/${id}/cancel`);
 export const prepareScene = (id) => postJson(`/api/jobs/${id}/scene`);
 
-export const videoUrl = (id) => `/api/jobs/${id}/video`;
+export const videoUrl = (id, converted) => `/api/jobs/${id}/video?source=${converted ? "preview" : "original"}`;
 export const npzUrl = (id) => `/api/jobs/${id}/npz`;
-export const fbxUrl = (id, withSkin, body = "neutral", people = [], firstPose = "none") => {
+export const fbxUrl = (id, withSkin, body = "neutral", people = [], firstPose = "none", profile = "flowhmr") => {
   const query = new URLSearchParams({ mesh: withSkin ? "1" : "0", body, first_pose: firstPose });
+  if (profile !== "flowhmr") query.set("profile", profile);
   for (const person of people) query.append("person", String(person));
   return `/api/jobs/${id}/fbx?${query}`;
 };
+export const vmdUrl = (id, people = []) => {
+  const query = new URLSearchParams();
+  for (const person of people) query.append("person", String(person));
+  return `/api/jobs/${id}/vmd${people.length ? `?${query}` : ""}`;
+};
+export async function exportMetaHuman(id, people, template, signal) {
+  const body = new FormData();
+  body.append("template", template);
+  const response = await request(fbxUrl(id, false, "source", people, "none", "metahuman"), { method: "POST", body, signal });
+  const header = response.headers.get("Content-Disposition") ?? "";
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header)?.[1];
+  let filename = /filename="([^"]+)"|filename=([^;]+)/i.exec(header)?.slice(1).find(Boolean) ?? "metahuman.fbx";
+  if (encoded) {
+    try { filename = decodeURIComponent(encoded); } catch { /* use the plain name */ }
+  }
+  return { filename, blob: await response.blob() };
+}
 export const personThumbUrl = (id, i) => `/api/jobs/${id}/person/${i}.jpg`;
 export const thumbnailUrl = (id) => `/api/jobs/${id}/thumbnail.jpg`;
 

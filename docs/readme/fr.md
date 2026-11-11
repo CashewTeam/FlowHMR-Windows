@@ -12,19 +12,8 @@
 - **Prévisualisez et exportez plusieurs personnes ensemble.** Sélectionnez plusieurs personnes dans la même vidéo. L’aperçu combiné et le FBX préservent leurs positions relatives et leurs instants d’entrée dans le cadre. Rouvrez les anciennes tâches depuis l’historique à vignettes.
 - **Ajustez le résultat selon la vidéo.** Réglez le lissage des mouvements, la correction des contacts des pieds et la hauteur du sol. Activez HaMeR pour obtenir des mouvements de doigts plus détaillés. La caméra fixe est le mode par défaut ; choisissez la caméra mobile si la caméra pivote, s’incline ou roule visiblement.
 - **Traitez les vidéos en local.** Installez l’environnement d’inférence et les modèles dont vous avez besoin. Les modèles sont chargés au démarrage d’une génération. Une fois configurée, l’application peut fonctionner hors ligne. L’interface est disponible en 简体中文, 繁體中文, English, 日本語, 한국어, Русский et Français et mémorise votre choix.
-- **Exportez les données du mouvement.** Exportez en NPZ ou FBX. Le FBX peut contenir le squelette animé seul ou inclure le maillage déformable. Vous pouvez ajouter une T Pose ou une A Pose à l’image **−1** sans déplacer la première image du mouvement.
-
-## Extension Blender : FlowHMR 2 MMR
-
-**[Télécharger FlowHMR 2 MMR v1.3.1](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR_2_MMR_v1.3.1.zip)** · Auteurs : **小二, GPT** · Blender 3.6 ou ultérieur. Le flux multipersonne a été vérifié avec les versions 3.6.22 et 4.5.3.
-
-L’extension transfère les mouvements du FBX exporté vers un rig de contrôle cible généré par **MMR**. Pour plusieurs personnes, associez les rigs, prévisualisez les mouvements et enregistrez-les en images clés dans la même scène. Chaque cible reçoit sa propre Action, avec son instant d’entrée et sa position relative.
-
-1. Dans Blender, ouvrez **Édition → Préférences → Modules complémentaires** (Add-ons) et installez le ZIP. Dans Blender 3.6, cliquez sur **Installer**. Dans Blender 4.2 ou ultérieur, choisissez **Installer depuis le disque** dans le menu en haut à droite. Activez **FlowHMR 2 MMR**, puis appuyez sur **N** dans la vue 3D pour ouvrir l’onglet du même nom.
-2. Importez le FBX de FlowHMR et préparez le rig de contrôle cible généré par MMR. Pour conserver les numéros d’image négatifs du fichier, réglez **Animation Offset** sur `0` dans les options d’importation FBX.
-3. Pour une personne, sélectionnez la source et la cible, puis cliquez sur **建立实时预览** (Créer un aperçu en direct). Vérifiez le mouvement, puis cliquez sur **烘焙到新动作** (Enregistrer dans une nouvelle Action). Pour plusieurs personnes, activez **多人模式** (Mode multipersonne), cliquez sur **识别源骨架** (Détecter les rigs source), choisissez une cible par personne, puis utilisez **预览全部** (Tout prévisualiser) ou **一键烘焙全部** (Tout enregistrer).
-
-Le ZIP contient un guide sur la correspondance des os, les ajustements de pose et le placement des pieds.
+- **Export de mouvements.** Exportez en FBX FlowHMR, Mixamo ou MetaHuman, en VMD MMD ou en NPZ. Les FBX FlowHMR et Mixamo peuvent inclure un maillage et une pose T ou A à l’image **−1**. Voir le [guide d’export](../retarget-export.md).
+- **Personnages personnalisés.** Prévisualisez un PMX ou un FBX Mixamo ou MetaHuman avec maillage, choisissez un personnage par personne et conservez les réglages des os. Les rigs PMX compatibles proposent IK et FK.
 
 ## Vidéos d’exemple
 
@@ -41,13 +30,13 @@ Pour tester vous-même l’application, utilisez la [vidéo source d’exemple](
 ## Démarrage rapide
 
 1. Sous Windows 10 ou 11 en 64 bits, extrayez entièrement `FlowHMR-Windows.zip`, ouvrez le dossier `FlowHMR` extrait et lancez `FlowHMR.exe`. Le paquet de base comprend Python, l’interface de bureau et le composant d’export FBX.
-2. Installez un pilote compatible, puis ouvrez **Environnement** (运行环境) en haut à droite pour télécharger et activer l’environnement adapté à votre GPU. Pour NVIDIA, choisissez CUDA ; la version 12.8 est recommandée pour la série RTX 50. Pour les AMD RX série 9070, suivez les instructions ROCm ci-dessous.
+2. Installez un pilote compatible, puis ouvrez **Environnement** (运行环境) en haut à droite pour télécharger et activer l’environnement adapté à votre GPU. Pour NVIDIA, choisissez CUDA ; la version 12.8 est recommandée pour la série RTX 50. Si votre AMD Radeon RX série 9000 utilise `gfx1201`, suivez les instructions ci-dessous pour essayer ROCm.
 3. Dans **Modèles**, choisissez **Télécharger tous les modèles publics** (下载全部公开模型), ou téléchargez les modèles un par un. Les fichiers sont vérifiés avant d’être placés dans `models/`. SAM 3D Body et VGGT-Omega proviennent de ModelScope. Si l’affinage des doigts est inutile, vous pouvez omettre HaMeR lors du téléchargement individuel. Consultez le tableau ci-dessous pour les modèles officiels qui nécessitent une connexion.
-4. Déposez une vidéo dans l’application, sélectionnez les personnes et la plage d’images, puis lancez la génération. Vérifiez le résultat dans l’aperçu, puis exportez-le en FBX ou NPZ depuis le menu.
+4. Déposez une vidéo dans l’application, sélectionnez les personnes et la plage d’images, puis lancez la génération. Vérifiez le résultat dans l’aperçu, puis exportez-le en FBX, VMD ou NPZ depuis le menu.
 
-### AMD RX série 9070 : prise en charge expérimentale
+### AMD Radeon RX série 9000 : prise en charge expérimentale
 
-AMD et NVIDIA utilisent les mêmes fichiers `FlowHMR-Windows.zip` et `FlowHMR.exe`. Sous Windows 11 avec une RX série 9070 (`gfx1201`), ouvrez **Environnement** au premier lancement, puis téléchargez et activez **ROCm 7.14.0 · gfx1201**. L’application mémorise ce choix et sélectionne automatiquement un GPU AMD compatible. L’installation des modèles se fait de la même façon.
+AMD et NVIDIA utilisent les mêmes fichiers `FlowHMR-Windows.zip` et `FlowHMR.exe`. Sous Windows 11 avec une Radeon RX série 9000 à architecture `gfx1201`, ouvrez **Environnement** au premier lancement, puis téléchargez et activez **ROCm 7.14.0 · gfx1201**. L’application mémorise ce choix et sélectionne automatiquement un GPU AMD compatible. L’installation des modèles se fait de la même façon.
 
 Le téléchargement et l’extraction des paquets officiels AMD ainsi que le chargement des bibliothèques ont été vérifiés. La capture de mouvement complète, y compris l’estimation du mouvement de la caméra et HaMeR, reste à valider sur une RX 9070 XT. Consultez le [guide d’installation et de validation AMD](../../docs/amd-rocm.md).
 

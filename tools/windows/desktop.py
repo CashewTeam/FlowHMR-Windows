@@ -8,12 +8,13 @@ import json
 import logging
 import os
 from pathlib import Path
+from secrets import token_urlsafe
 import socket
 import subprocess
 import sys
 import threading
 from urllib.parse import urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import webview
@@ -51,6 +52,7 @@ class DesktopBackend:
         self.closed = threading.Event()
         self._lock = threading.Lock()
         self.name = f"Local\\FlowHMR-backend-{uuid4().hex}"
+        self.character_key = token_urlsafe(32)
         kernel.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
         kernel.CreateJobObjectW.restype = wintypes.HANDLE
         kernel.SetInformationJobObject.argtypes = (
@@ -187,7 +189,20 @@ def expose_model_pickers(window, port, backend):
     def choose_model_archive():
         return choose(webview.FileDialog.OPEN, (model_archive_filter(),))
 
-    window.expose(choose_model_folder, choose_model_archive)
+    def choose_character_file():
+        path = choose(webview.FileDialog.OPEN, ("PMX FBX (*.pmx;*.fbx)",))
+        if not path:
+            return None
+        payload = json.dumps({"file": path}).encode("utf-8")
+        req = Request(origin + "/api/desktop/character-file", data=payload,
+                      headers={"Content-Type": "application/json", "X-FlowHMR-Desktop-Key": backend.character_key})
+        try:
+            with urlopen(req, timeout=10) as result:
+                return json.load(result)
+        except (OSError, ValueError):
+            return {"error": "character_file"}
+
+    window.expose(choose_model_folder, choose_model_archive, choose_character_file)
 
 
 def expose_language_preference(window, port, backend):
@@ -224,6 +239,7 @@ def connect(window, port, backend):
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
                  "-ServerOnly", "-Port", str(port), "-DesktopJobName", backend.name],
                 cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                env={**os.environ, "FLOWHMR_DESKTOP_CHARACTER_KEY": backend.character_key},
                 creationflags=subprocess.CREATE_NO_WINDOW, timeout=310,
             )
         if backend.closed.is_set():

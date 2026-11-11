@@ -22,7 +22,7 @@
         <summary data-i18n="menu.file">文件</summary>
         <div class="editor-menu-popup">
           <button type="button" id="menuImport" data-i18n="menu.import">导入视频…</button>
-          <button type="button" id="menuFbx" disabled data-i18n="menu.export_fbx">导出 FBX…</button>
+          <button type="button" id="menuFbx" disabled data-i18n="menu.export_motion">导出动作…</button>
           <button type="button" id="menuNpz" disabled data-i18n="menu.export_npz">导出 NPZ…</button>
         </div>
       </details>
@@ -174,8 +174,8 @@
         <div class="field camera-mode slider-field">
           <label for="optSmoothing" data-i18n="settings.smoothing">滤波强度</label>
           <div class="slider-control">
-            <input id="optSmoothing" type="range" min="0" max="1" step="0.01" value="0" aria-describedby="smoothingHint">
-            <input class="input" id="optSmoothingValue" type="number" min="0" max="1" step="any" value="0" aria-label="精确输入滤波强度" aria-describedby="smoothingHint" data-i18n-label="settings.smoothing_value">
+            <input id="optSmoothing" type="range" min="0" max="1" step="0.01" value="0.04" aria-describedby="smoothingHint">
+            <input class="input" id="optSmoothingValue" type="number" min="0" max="1" step="any" value="0.04" aria-label="精确输入滤波强度" aria-describedby="smoothingHint" data-i18n-label="settings.smoothing_value">
           </div>
           <span class="setting-help" id="smoothingHint" data-i18n="settings.smoothing_default_hint">0 为关闭；1 对应 3 帧。</span>
         </div>
@@ -209,15 +209,15 @@
           <span data-i18n="correction.lock">脚步锁定</span>
           <select class="input" id="optFootLockPreset" aria-describedby="footLockHint">
             <option value="normal" data-i18n="correction.normal">标准</option>
-            <option value="strong" data-i18n="correction.strong">加强</option>
+            <option value="strong" selected data-i18n="correction.strong">加强</option>
           </select>
           <span class="setting-help" id="footLockHint"></span>
         </label>
         <div class="field camera-mode slider-field hidden" id="soleFitRow">
           <label for="optSoleFitStrength" data-i18n="correction.sole">脚掌贴地强度</label>
           <div class="slider-control">
-            <input id="optSoleFitStrength" type="range" min="0" max="1" step="0.01" value="0" aria-describedby="soleFitHint">
-            <input class="input" id="optSoleFitValue" type="number" min="0" max="1" step="0.01" value="0" aria-label="精确输入脚掌贴地强度" data-i18n-label="correction.sole_value">
+            <input id="optSoleFitStrength" type="range" min="0" max="1" step="0.01" value="0.6" aria-describedby="soleFitHint">
+            <input class="input" id="optSoleFitValue" type="number" min="0" max="1" step="0.01" value="0.6" aria-label="精确输入脚掌贴地强度" data-i18n-label="correction.sole_value">
           </div>
           <span class="setting-help" id="soleFitHint" data-i18n="correction.sole_hint">0 为关闭；0.6 为适中效果。</span>
         </div>
@@ -326,12 +326,62 @@
             <option value="male" data-i18n="view.male">男性</option>
           </select>
         </label>
+        <button type="button" class="btn-secondary small hidden" id="previewCharacter" data-i18n="character.button" data-i18n-title="character.title">角色</button>
+        <details class="editor-menu hidden" id="characterPoseMenu" data-keep-open>
+          <summary data-i18n="pose.menu">骨骼调节</summary>
+          <div class="editor-menu-popup character-pose-popup">
+            <div id="posePanelGrip" class="pose-panel-grip" title="拖动标题栏移动面板" data-i18n-title="pose.drag_panel">
+              <svg viewBox="0 0 12 16" aria-hidden="true"><path d="M3 3h.01M9 3h.01M3 8h.01M9 8h.01M3 13h.01M9 13h.01" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+              <span data-i18n="pose.menu">骨骼调节</span>
+            </div>
+            <div class="pose-panel-body">
+              <label class="character-selection pose-person hidden" id="poseActorRow">
+                <span data-i18n="character.actor">人物</span>
+                <select class="input" id="poseActor"></select>
+              </label>
+              <div id="poseIkRow" class="character-selection pose-person hidden">
+                <span data-i18n="pose.pmx_mode">骨骼模式</span>
+                <div class="pose-tabs pose-ik-tabs">
+                  <button type="button" id="poseFkMode" aria-pressed="true" data-i18n-title="pose.pmx_fk_hint">FK</button>
+                  <button type="button" id="poseIkMode" aria-pressed="false" data-i18n-title="pose.pmx_ik_hint">IK</button>
+                </div>
+              </div>
+              <div class="pose-toolbar">
+                <div class="pose-tabs">
+                  <button type="button" id="poseBodyTab" aria-pressed="true" data-i18n="pose.body">身体</button>
+                  <button type="button" id="poseFingersTab" aria-pressed="false" data-i18n="pose.fingers">手指</button>
+                </div>
+                <button type="button" id="poseResetAll" data-i18n="pose.reset_all">重置全部</button>
+              </div>
+              <div class="pose-content">
+                <div>
+                  <div id="poseDiagram" class="pose-diagram"></div>
+                  <p class="pose-hint" id="poseDiagramHint"></p>
+                </div>
+                <div class="pose-controls">
+                  <div class="pose-joint-heading">
+                    <strong id="poseJointName"></strong>
+                    <span id="poseMappedName"></span>
+                  </div>
+                  <div id="poseRotationAxes"></div>
+                  <div id="poseTranslationAxes" class="hidden"></div>
+                  <div class="pose-joint-actions">
+                    <button type="button" id="poseResetJoint" data-i18n="pose.reset_joint">重置此骨骼</button>
+                    <button type="button" id="poseMirror" aria-pressed="false" data-i18n="pose.live_mirror"
+                            data-i18n-title="pose.live_mirror_hint" title="开启后，调整成对的骨骼时另一侧实时镜像">镜像调节</button>
+                  </div>
+                </div>
+              </div>
+              <p class="pose-hint pose-export-hint" data-i18n="pose.hint">实时作用于整段动作，按当前 PMX 角色导出 VMD 时会保留。</p>
+            </div>
+          </div>
+        </details>
         <span class="result-info" id="resultInfo"></span>
       </div>
       <div class="downloads">
         <button type="button" class="editor-icon" id="toggleGrid" aria-pressed="true" aria-label="显示地面网格" title="显示地面网格" data-i18n-label="view.grid" data-i18n-title="view.grid"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h12v12H2zM6 2v12m4-12v12M2 6h12M2 10h12"/></svg></button>
         <button type="button" class="editor-icon" id="toggleWire" aria-pressed="false" aria-label="线框显示" title="线框显示" data-i18n-label="view.wire" data-i18n-title="view.wire"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.5" ry="6"/><path d="M2 8h12"/></svg></button>
-        <button type="button" class="btn-secondary small hidden" id="dlFbx" disabled>FBX</button>
+        <button type="button" class="btn-secondary small hidden" id="dlFbx" disabled data-i18n-title="export.motion">FBX / VMD</button>
         <a class="btn-primary small hidden" id="dlNpz" href="#" download title="SMPL-H motion: poses (T,52,3), trans (T,3), betas" data-i18n-title="export.npz_hint">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           NPZ
@@ -357,7 +407,7 @@
       </div>
       <div class="viewer-empty" id="viewerEmpty" data-i18n="view.empty">导入视频后，点击「生成 3D 动作」</div>
       <div class="viewer-tools hidden" id="viewerTools">
-        <label title="在模型表面叠加 SMPL-H 骨架和关节" data-i18n-title="view.skeleton_hint"><input type="checkbox" id="optSkeleton" checked disabled> <span data-i18n="view.skeleton">骨架</span></label>
+        <label title="在模型表面叠加 SMPL-H 骨架和关节" id="skeletonOverlayLabel" data-i18n-title="view.skeleton_hint"><input type="checkbox" id="optSkeleton" checked disabled> <span data-i18n="view.skeleton">骨架</span></label>
         <label title="用 Blender 风格的八面体显示骨骼" data-i18n-title="view.cones_hint"><input type="checkbox" id="optBoneCones" disabled> <span data-i18n="view.cones">锥体骨骼</span></label>
         <label title="勾选显示人物表面，取消勾选只显示骨架" data-i18n-title="view.skin_hint"><input type="checkbox" id="optSkin" checked disabled> <span data-i18n="view.skin">蒙皮</span></label>
         <label><input type="checkbox" id="optFollow" checked> <span data-i18n="view.follow">跟随</span></label>
@@ -485,25 +535,87 @@
 
 <dialog id="fbxExportDialog" class="fbx-export-dialog" aria-labelledby="fbxExportTitle">
   <form method="dialog">
-    <h3 class="card-title" id="fbxExportTitle" data-i18n="export.fbx">导出 FBX</h3>
-    <fieldset class="fbx-export-people hidden" id="fbxPeople">
-      <legend data-i18n="export.people">放进同一个 FBX 的人物</legend>
-      <div id="fbxPeopleList"></div>
-    </fieldset>
-    <label class="fbx-export-skin"><input type="checkbox" id="fbxWithSkin"> <span data-i18n="export.skin">包含蒙皮网格</span></label>
-    <p class="setting-help" data-i18n="export.skin_hint">带蒙皮时使用当前预览体型。仅用于重定向时，导出动画骨架即可。</p>
-    <label class="fbx-export-pose" for="fbxFirstPose">
-      <span data-i18n="export.reference">首帧参考姿势</span>
-      <select id="fbxFirstPose" class="input">
-        <option value="none" data-i18n="export.none">不添加</option>
-        <option value="t">T Pose</option>
-        <option value="a">A Pose</option>
+    <h3 class="card-title" id="fbxExportTitle" data-i18n="export.motion">导出动作</h3>
+    <label class="fbx-export-format" for="motionExportFormat">
+      <span data-i18n="export.format">格式</span>
+      <select id="motionExportFormat" class="input">
+        <option value="flowhmr">FlowHMR FBX</option>
+        <option value="mixamo">Mixamo FBX</option>
+        <option value="metahuman">MetaHuman FBX</option>
+        <option value="vmd">MMD VMD</option>
       </select>
     </label>
-    <p class="setting-help" data-i18n="export.reference_hint">参考姿势写入第 −1 帧，原动作帧号不变。</p>
+    <p class="setting-help export-format-hint" id="motionExportHint"></p>
+    <div id="vmdOptions" class="character-file hidden">
+      <select class="input" id="vmdTarget" aria-label="PMX 模型" data-i18n-label="character.file">
+        <option value="target" id="vmdTargetCharacter"></option>
+        <option value="generic" data-i18n="export.vmd_generic">通用骨架</option>
+      </select>
+      <button type="button" class="btn-secondary small" id="vmdChooseCharacter" data-i18n="export.vmd_choose">选择 PMX 角色…</button>
+    </div>
+    <fieldset class="fbx-export-people hidden" id="fbxPeople">
+      <legend id="exportPeopleLabel" data-i18n="export.select_people">选择人物</legend>
+      <div id="fbxPeopleList"></div>
+    </fieldset>
+    <div id="standardFbxOptions">
+      <label class="fbx-export-skin"><input type="checkbox" id="fbxWithSkin"> <span data-i18n="export.skin">包含蒙皮网格</span></label>
+      <p class="setting-help" data-i18n="export.skin_hint">带蒙皮时使用当前预览体型。仅用于重定向时，导出动画骨架即可。</p>
+      <label class="fbx-export-pose" for="fbxFirstPose">
+        <span data-i18n="export.reference">参考姿势</span>
+        <select id="fbxFirstPose" class="input">
+          <option value="none" data-i18n="export.none">不添加</option>
+          <option value="t">T Pose</option>
+          <option value="a">A Pose</option>
+        </select>
+      </label>
+      <p class="setting-help" data-i18n="export.reference_hint">参考姿势是 FBX 第 −1 帧的关键帧。Blender 默认导入后在第 0 帧，需切到姿态位置查看。</p>
+    </div>
+    <label class="field fbx-template hidden" id="metaHumanTemplateRow">
+      <span data-i18n="export.metahuman_template">目标身体骨架（FBX）</span>
+      <input class="input" type="file" id="metaHumanTemplate" accept=".fbx">
+    </label>
+    <p class="error hidden" id="motionExportError" role="alert"></p>
     <div class="fbx-export-actions">
       <button class="btn-secondary small" value="cancel" data-i18n="common.cancel">取消</button>
       <button class="btn-primary small" id="fbxConfirm" value="export" data-i18n="common.export">导出</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="previewCharacterDialog" class="fbx-export-dialog" aria-labelledby="previewCharacterTitle">
+  <form method="dialog">
+    <h3 class="card-title" id="previewCharacterTitle" data-i18n="character.title">预览角色</h3>
+    <p class="setting-help" data-i18n="character.guide">选择 PMX 或带蒙皮的 Mixamo / MetaHuman FBX。外置贴图放在模型旁边，程序会按引用加载。</p>
+    <label class="character-selection hidden" id="characterActorRow">
+      <span data-i18n="character.actor">人物</span>
+      <select class="input" id="characterActor"></select>
+    </label>
+    <div class="character-selection">
+      <label for="characterLibrary" data-i18n="character.library">角色库</label>
+      <select class="input" id="characterLibrary"></select>
+      <button type="button" class="btn-secondary small character-remove" id="characterDelete" data-i18n="character.library_delete" disabled>删除</button>
+    </div>
+    <div class="character-delete-confirm hidden" id="characterDeleteConfirm" role="group" aria-labelledby="characterDeleteMessage">
+      <p class="setting-help" id="characterDeleteMessage"></p>
+      <div class="fbx-export-actions">
+        <button type="button" class="btn-secondary small" id="characterDeleteCancel" data-i18n="common.cancel">取消</button>
+        <button type="button" class="btn-secondary small character-remove" id="characterDeleteConfirmButton" data-i18n="character.library_confirm_button">删除角色</button>
+      </div>
+    </div>
+    <p class="setting-help" data-i18n="character.library_hint">在桌面版应用新角色时，模型和引用的贴图会存入 models/characters。角色选择和骨骼调节会自动记住。</p>
+    <div class="character-file">
+      <input type="file" id="pmxFolder" webkitdirectory multiple hidden>
+      <input type="file" id="characterModelFile" accept=".pmx,.fbx" hidden>
+      <button type="button" class="btn-secondary small" id="characterBrowse" data-i18n="character.pick">选择模型文件…</button>
+      <button type="button" class="btn-secondary small hidden" id="pmxBrowse" data-i18n="character.folder">选择模型文件夹…</button>
+      <select class="input hidden" id="pmxFile" data-i18n-label="character.file" aria-label="角色模型"></select>
+    </div>
+    <p class="setting-help" id="pmxStatus" role="status"></p>
+    <p class="error hidden" id="pmxError" role="alert"></p>
+    <div class="fbx-export-actions">
+      <button type="button" class="btn-secondary small" id="pmxRestore" data-i18n="character.restore">恢复 SMPL-H</button>
+      <button class="btn-secondary small" id="characterDialogCancel" value="cancel" data-i18n="common.cancel">取消</button>
+      <button class="btn-primary small" id="pmxApply" value="apply" disabled data-i18n="character.apply">应用角色</button>
     </div>
   </form>
 </dialog>

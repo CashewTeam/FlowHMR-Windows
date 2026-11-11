@@ -215,17 +215,18 @@ class SMPLH2FBX:
         self.mgr.Destroy()
 
     def convert_npz_to_fbx(self, npz_data, outname: str, fps: int = 30, export_mesh: bool = True,
-                           variant_path=None, *, first_pose="none") -> bool:
+                           variant_path=None, *, first_pose="none", profile="flowhmr", template_path=None) -> bool:
         if isinstance(npz_data, (str, os.PathLike)):
             with np.load(npz_data, allow_pickle=False) as data:
                 npz_data = {k: data[k] for k in ("poses", "trans", "betas", "mocap_framerate") if k in data}
 
         fps = int(npz_data.get("mocap_framerate", fps))
         end = np.asarray(npz_data["poses"]).size // (52 * 3) - 1
-        return self._write_motions([(None, 0, npz_data)], outname, fps, end, export_mesh, variant_path, first_pose)
+        return self._write_motions([(None, 0, npz_data)], outname, fps, end, export_mesh, variant_path, first_pose,
+                                   profile, template_path)
 
     def convert_scene_to_fbx(self, npz_path, people, outname, *, export_mesh=True, variant_path=None,
-                             first_pose="none") -> bool:
+                             first_pose="none", profile="flowhmr", template_path=None) -> bool:
         """Build one FBX scene with a shared timeline for all people."""
         with np.load(npz_path, allow_pickle=False) as data:
             motions = []
@@ -236,9 +237,10 @@ class SMPLH2FBX:
                     raise ValueError("FBX source range does not match the scene motion")
                 motions.append((number, first, motion))
             return self._write_motions(motions, outname, int(data["mocap_framerate"]),
-                                       max(p["end"] for p in people), export_mesh, variant_path, first_pose)
+                                       max(p["end"] for p in people), export_mesh, variant_path, first_pose,
+                                       profile, template_path)
 
-    def _add_motion(self, scene, layer, npz_data, number, start, frame_dur, end, export_mesh, variant_path, first_pose):
+    def _motion_geometry(self, npz_data):
         poses = np.asarray(npz_data["poses"], dtype=np.float32).reshape(-1, 52, 3)
         trans = np.asarray(npz_data["trans"], dtype=np.float64)
         betas = np.asarray(npz_data["betas"], dtype=np.float32)
@@ -252,6 +254,11 @@ class SMPLH2FBX:
         joints = offsets.astype(np.float64)
         for j in range(1, len(joints)):
             joints[j] += joints[parents[j]]
+        return poses, trans, offsets, mesh, parents, joints
+
+    def _add_motion(self, scene, layer, npz_data, number, start, frame_dur, end, export_mesh, variant_path, first_pose,
+                    profile):
+        poses, trans, offsets, mesh, parents, joints = self._motion_geometry(npz_data)
         head_surface = mesh[self.smpl_data["weights"][:, HEAD_JOINT] > .5]
         basis, tips = _display_frames(joints, parents, head_top_y=head_surface[:, 1].max())
         floor_offset = np.array([0., -mesh[:, 1].min(), 0.])
@@ -273,8 +280,13 @@ class SMPLH2FBX:
         if number is not None:
             parent_node = fbx.FbxNode.Create(scene, f"Person {number}")
             scene.GetRootNode().AddChild(parent_node)
-        skel_nodes = build_skeleton_nodes(self.mgr, scene, local_offsets, parents, FBX_JOINT_NAMES,
-                                          rest_rotations=local_rest, tip_lengths=tips, parent_node=parent_node,
+        names, tip_names = FBX_JOINT_NAMES, None
+        if profile == "mixamo":
+            from .fbx_profiles import mixamo_bone_names
+
+            names, tip_names = mixamo_bone_names(FBX_JOINT_NAMES, tips)
+        skel_nodes = build_skeleton_nodes(self.mgr, scene, local_offsets, parents, names,
+                                          rest_rotations=local_rest, tip_lengths=tips, tip_names=tip_names, parent_node=parent_node,
                                           reference_name="FlowHMR Motion" if number is None else f"FlowHMR Person {number}")
         if export_mesh:
             if variant_path is not None:
@@ -332,11 +344,27 @@ class SMPLH2FBX:
             for axis in "XYZ":
                 step_keys(parent_node.LclScaling.GetCurve(layer, axis, True), sorted(scale.items()))
 
-    def _write_motions(self, motions, outname, fps, end, export_mesh, variant_path, first_pose):
+    def _write_motions(self, motions, outname, fps, end, export_mesh, variant_path, first_pose, profile, template_path):
         if not motions or fps <= 0 or end < 0:
             raise ValueError("Invalid FBX timeline")
         if first_pose not in ("none", "t", "a"):
             raise ValueError("Invalid FBX reference pose")
+        if profile not in ("flowhmr", "mixamo", "metahuman"):
+            raise ValueError("Unknown FBX skeleton profile")
+        if profile == "metahuman":
+            if export_mesh or variant_path is not None or first_pose != "none" or len(motions) != 1 or not template_path:
+                raise ValueError("MetaHuman export needs one person, a body FBX template and animation-only settings")
+            from .fbx_profiles import write_metahuman_animation
+
+            _, start, motion = motions[0]
+            poses, trans, _, mesh, parents, joints = self._motion_geometry(motion)
+            write_metahuman_animation(
+                template_path, outname, angle_axis_to_rotation_matrix(torch.from_numpy(poses)).numpy(), trans,
+                joints, parents, floor_offset=-float(mesh[:, 1].min()), fps=fps, start=start,
+            )
+            return True
+        if template_path is not None:
+            raise ValueError("A body FBX template is only used for MetaHuman export")
         scene = fbx.FbxScene.Create(self.mgr, "")
         try:
             settings = scene.GetGlobalSettings()
@@ -356,7 +384,8 @@ class SMPLH2FBX:
             layer = fbx.FbxAnimLayer.Create(scene, "BaseLayer")
             stack.AddMember(layer)
             for number, start, motion in motions:
-                self._add_motion(scene, layer, motion, number, start, 1.0 / fps, end, export_mesh, variant_path, first_pose)
+                self._add_motion(scene, layer, motion, number, start, 1.0 / fps, end, export_mesh, variant_path, first_pose,
+                                 profile)
             export_scene_atomic(self.mgr, scene, os.fspath(outname), embed_textures=export_mesh)
         finally:
             scene.Destroy()

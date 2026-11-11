@@ -12,19 +12,8 @@
 - **多人一起预览和导出。** 同一条视频可选中多个人；合并预览和 FBX 保留他们在原视频中的相对站位和入场时间。旧任务可从带缩略图的历史里继续查看。
 - **按素材调整动作。** 可调动作滤波、脚部接触修正和地面高度；需要更细的手指动作时，可开启 HaMeR 手指精修。相机默认用固定机位，镜头明显转向、俯仰或滚转时再用运动相机。
 - **在本机运行。** 程序按需安装推理环境和模型，开始生成时才加载模型；装好后可离线处理。支持简体中文、繁體中文、English、日本語、한국어、Русский 和 Français，重开程序会记住上次选的语言。
-- **导出动作数据。** 支持 NPZ 和 FBX；FBX 可选择带蒙皮或只导出动画骨架，也可在第 **−1 帧**附上 T Pose 或 A Pose，原动作起始帧保持不变。
-
-## 配套 Blender 插件：FlowHMR 2 MMR
-
-**[下载 FlowHMR 2 MMR v1.3.1](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR_2_MMR_v1.3.1.zip)** · 作者：**小二, GPT** · 支持 Blender 3.6 及以上，多人流程已在 3.6.22 和 4.5.3 验证。
-
-有了 FBX 后，用此插件把源动作转到由 **MMR** 生成的目标控制骨架。多人可以在同一个场景配对、预览和一键烘焙；每个目标各有独立的 Action，保留各自的入场时间和相对站位。
-
-1. 在 Blender 的 **编辑 → 偏好设置 → 插件** 安装 ZIP。Blender 3.6 点击 **安装**；Blender 4.2 及以上从右上角菜单选择 **从磁盘安装**。启用 **FlowHMR 2 MMR** 后，在 3D 视图按 **N** 打开同名页签。
-2. 导入 FlowHMR 的 FBX，并准备好由 MMR 生成的目标控制骨架。若需要保留文件中的负帧号，导入 FBX 时把 **Animation Offset** 设为 `0`。
-3. 单人选定源和目标后，点击 **建立实时预览**，检查动作再 **烘焙到新动作**。多人开启 **多人模式**，点击 **识别源骨架**，为每个人选择各自的目标，再 **预览全部** 或 **一键烘焙全部**。
-
-插件 ZIP 内附使用说明，包括骨骼映射、姿态微调和脚底定位。
+- **动作导出。** 支持 FlowHMR / Mixamo / MetaHuman FBX、MMD VMD 和 NPZ。FlowHMR 和 Mixamo FBX 可选蒙皮和第 **−1 帧**的 T Pose / A Pose。详见[导出与重定向](docs/retarget-export.md)。
+- **自定义角色。** 支持 PMX 和带蒙皮的 Mixamo / MetaHuman FBX；多人可分别选择角色并记住骨骼调整。兼容的 PMX 支持原生 IK / FK 切换，按角色导出的 VMD 可保留脚部 IK。
 
 ## 示例视频
 
@@ -41,13 +30,13 @@
 ## 快速开始
 
 1. 在 64 位 Windows 10 / 11 上完整解压 `FlowHMR-Windows.zip`，进入解包后的 `FlowHMR` 文件夹，双击 `FlowHMR.exe`。基础包自带 Python、界面组件和 FBX 导出组件。
-2. 安装兼容的显卡驱动，再在右上角 **运行环境** 下载并启用对应版本。NVIDIA 用户选 CUDA，RTX 50 系列推荐 CUDA 12.8。AMD RX 9070 系列按下方步骤选择 ROCm。
+2. 安装兼容的显卡驱动，再在右上角 **运行环境** 下载并启用对应版本。NVIDIA 用户选 CUDA，RTX 50 系列推荐 CUDA 12.8。AMD Radeon RX 9000 系列中使用 `gfx1201` 的型号，可按下方步骤试用 ROCm。
 3. 打开 **模型**，点 **下载全部公开模型**，也可以逐项下载。公开模型会校验后放到 `models/`；SAM 3D Body 和 VGGT-Omega 由魔搭提供。不需要手指精修时，可以跳过 HaMeR。需要登录的官方模型按下表取得。
-4. 把视频拖进软件，选择要处理的人物和帧范围，再开始生成。完成后可先预览，再从菜单导出 FBX 或 NPZ。
+4. 把视频拖进软件，选择要处理的人物和帧范围，再开始生成。完成后可先预览，再从菜单导出 FBX、VMD 或 NPZ。
 
-### AMD RX 9070 系列（实验支持）
+### AMD Radeon RX 9000 系列（实验支持）
 
-AMD 和 NVIDIA 使用同一个 `FlowHMR-Windows.zip` 和 `FlowHMR.exe`。Windows 11 上使用 RX 9070 系列显卡（`gfx1201`）时，首次打开软件后，在 **运行环境** 下载并启用 **ROCm 7.14.0 · gfx1201**。软件会记住这项选择，并自动选用兼容的 AMD 显卡。模型安装步骤相同。
+AMD 和 NVIDIA 使用同一个 `FlowHMR-Windows.zip` 和 `FlowHMR.exe`。在 Windows 11 上使用 Radeon RX 9000 系列的 `gfx1201` 型号时，首次打开软件后，在 **运行环境** 下载并启用 **ROCm 7.14.0 · gfx1201**。软件会记住这项选择，并自动选用兼容的 AMD 显卡。模型安装步骤相同。
 
 已验证 AMD 官方包的下载、解包和运行库加载。RX 9070 XT 上的完整动捕流程，包括运动相机和 HaMeR，仍待实机验证。见 [AMD 安装与验证说明](docs/amd-rocm.md)。
 
