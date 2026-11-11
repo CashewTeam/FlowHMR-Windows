@@ -41,9 +41,15 @@ Pour tester vous-même l’application, utilisez la [vidéo source d’exemple](
 ## Démarrage rapide
 
 1. Sous Windows 10 ou 11 en 64 bits, extrayez entièrement `FlowHMR-Windows.zip`, ouvrez le dossier `FlowHMR` extrait et lancez `FlowHMR.exe`. Le paquet de base comprend Python, l’interface de bureau et le composant d’export FBX.
-2. Si vous utilisez un GPU NVIDIA, installez un pilote compatible, puis ouvrez **Environnement** (运行环境) en haut à droite pour télécharger et activer une version CUDA. CUDA 12.8 est recommandé pour la série RTX 50. Pour les AMD RX série 9070, consultez la [prise en charge expérimentale de ROCm](../../docs/amd-rocm.md).
+2. Installez un pilote compatible, puis ouvrez **Environnement** (运行环境) en haut à droite pour télécharger et activer l’environnement adapté à votre GPU. Pour NVIDIA, choisissez CUDA ; la version 12.8 est recommandée pour la série RTX 50. Pour les AMD RX série 9070, suivez les instructions ROCm ci-dessous.
 3. Dans **Modèles**, choisissez **Télécharger tous les modèles publics** (下载全部公开模型), ou téléchargez les modèles un par un. Les fichiers sont vérifiés avant d’être placés dans `models/`. SAM 3D Body et VGGT-Omega proviennent de ModelScope. Si l’affinage des doigts est inutile, vous pouvez omettre HaMeR lors du téléchargement individuel. Consultez le tableau ci-dessous pour les modèles officiels qui nécessitent une connexion.
 4. Déposez une vidéo dans l’application, sélectionnez les personnes et la plage d’images, puis lancez la génération. Vérifiez le résultat dans l’aperçu, puis exportez-le en FBX ou NPZ depuis le menu.
+
+### AMD RX série 9070 : prise en charge expérimentale
+
+AMD et NVIDIA utilisent les mêmes fichiers `FlowHMR-Windows.zip` et `FlowHMR.exe`. Sous Windows 11 avec une RX série 9070 (`gfx1201`), ouvrez **Environnement** au premier lancement, puis téléchargez et activez **ROCm 7.14.0 · gfx1201**. L’application mémorise ce choix et sélectionne automatiquement un GPU AMD compatible. L’installation des modèles se fait de la même façon.
+
+Le téléchargement et l’extraction des paquets officiels AMD ainsi que le chargement des bibliothèques ont été vérifiés. La capture de mouvement complète, y compris l’estimation du mouvement de la caméra et HaMeR, reste à valider sur une RX 9070 XT. Consultez le [guide d’installation et de validation AMD](../../docs/amd-rocm.md).
 
 ### Quels modèles officiels télécharger ?
 

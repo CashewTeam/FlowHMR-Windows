@@ -41,9 +41,15 @@
 ## 快速开始
 
 1. 在 64 位 Windows 10 / 11 上完整解压 `FlowHMR-Windows.zip`，进入解包后的 `FlowHMR` 文件夹，双击 `FlowHMR.exe`。基础包自带 Python、界面组件和 FBX 导出组件。
-2. 使用 NVIDIA 显卡时，先安装兼容驱动，再点右上角 **运行环境** 下载并启用 CUDA 版本。RTX 50 系列推荐 CUDA 12.8。AMD RX 9070 系列用户可查看 [ROCm 实验支持](docs/amd-rocm.md)。
+2. 安装兼容的显卡驱动，再在右上角 **运行环境** 下载并启用对应版本。NVIDIA 用户选 CUDA，RTX 50 系列推荐 CUDA 12.8。AMD RX 9070 系列按下方步骤选择 ROCm。
 3. 打开 **模型**，点 **下载全部公开模型**，也可以逐项下载。公开模型会校验后放到 `models/`；SAM 3D Body 和 VGGT-Omega 由魔搭提供。不需要手指精修时，可以跳过 HaMeR。需要登录的官方模型按下表取得。
 4. 把视频拖进软件，选择要处理的人物和帧范围，再开始生成。完成后可先预览，再从菜单导出 FBX 或 NPZ。
+
+### AMD RX 9070 系列（实验支持）
+
+AMD 和 NVIDIA 使用同一个 `FlowHMR-Windows.zip` 和 `FlowHMR.exe`。Windows 11 上使用 RX 9070 系列显卡（`gfx1201`）时，首次打开软件后，在 **运行环境** 下载并启用 **ROCm 7.14.0 · gfx1201**。软件会记住这项选择，并自动选用兼容的 AMD 显卡。模型安装步骤相同。
+
+已验证 AMD 官方包的下载、解包和运行库加载。RX 9070 XT 上的完整动捕流程，包括运动相机和 HaMeR，仍待实机验证。见 [AMD 安装与验证说明](docs/amd-rocm.md)。
 
 ### 官方模型该下载哪个？
 

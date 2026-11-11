@@ -41,9 +41,15 @@ To try the app yourself, use the repository's [sample footage](../../assets/exam
 ## Quick start
 
 1. On 64-bit Windows 10 or 11, extract the entire `FlowHMR-Windows.zip` archive, open the extracted `FlowHMR` folder and double-click `FlowHMR.exe`. The base package includes Python, the desktop interface and the FBX export component.
-2. For an NVIDIA GPU, install a compatible driver, then open **Runtime** (运行环境) in the upper-right corner to download and enable a CUDA version. CUDA 12.8 is recommended for the RTX 50 series. AMD RX 9070 series users can check [experimental ROCm support](../../docs/amd-rocm.md).
+2. Install a compatible GPU driver, then open **Runtime** (运行环境) in the upper-right corner to download and enable the matching runtime. For NVIDIA, choose CUDA; CUDA 12.8 is recommended for the RTX 50 series. For the AMD RX 9070 series, follow the ROCm instructions below.
 3. Open **Models** and choose **Download all public models** (下载全部公开模型), or download them one by one. The app verifies the files before putting them in `models/`. SAM 3D Body and VGGT-Omega come from ModelScope. If you don't need finger refinement, you can skip HaMeR when downloading individually. Use the table below for the official models that require sign-in.
 4. Drop a video into the app, select people and a frame range, then start generation. Preview the finished motion and export FBX or NPZ from the menu.
+
+### AMD RX 9070 series (experimental support)
+
+AMD and NVIDIA users use the same `FlowHMR-Windows.zip` and `FlowHMR.exe`. On Windows 11 with an RX 9070 series GPU (`gfx1201`), open **Runtime** on first launch and download and enable **ROCm 7.14.0 · gfx1201**. The app remembers your choice and automatically selects a compatible AMD GPU. Model installation works the same way.
+
+Downloading and extracting the official AMD packages and loading their libraries have been verified. The full motion capture pipeline on an RX 9070 XT, including moving-camera estimation and HaMeR, still needs testing on that hardware. See the [AMD setup and validation guide](../../docs/amd-rocm.md).
 
 ### Which official model packages do I need?
 
