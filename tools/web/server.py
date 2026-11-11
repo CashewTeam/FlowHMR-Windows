@@ -217,10 +217,14 @@ def get_postprocess(floor, preset, *, sole_fit_strength=0.0):
 
 
 # --------------------------------------------------------------------------- parameters
+# SAM hand-decoder sampling intervals exposed in the Settings card (1 = every frame).
+SAM_HAND_STRIDES = (1, 2, 4)
+
+
 # Defaults for the page's Settings card; everything is editable per run in the UI.
 DEFAULT_PARAMS = {
     "seed": 0, "cfg_scale": 1.0, "steps": 20, "max_frames": None, "vggt_interval": 0,
-    "sam_chunk_size": None, "start_frame": 0, "end_frame": None,
+    "sam_chunk_size": None, "sam_hand_stride": 1, "start_frame": 0, "end_frame": None,
     "postprocess": True, "manual_select": True, "auto_frames": True, "static_camera": True,
     "correction_floor_m": None, "correction_preset": "strong",
     "sole_fit": True, "sole_fit_strength": SOLE_FIT_REFERENCE_STRENGTH,
@@ -289,6 +293,9 @@ def parse_params(src, base=None):
     hamer_stride = integer("hamer_stride", 1)
     if hamer_stride not in HAMER_STRIDES:
         raise UserMessage("HaMeR 采样间隔须为 1、2、3 或 4 帧。", "param_hamer_stride")
+    sam_hand_stride = integer("sam_hand_stride", 1)
+    if sam_hand_stride not in SAM_HAND_STRIDES:
+        raise UserMessage("SAM 手部采样间隔须为逐帧、每 2 帧或每 4 帧。", "param_sam_hand_stride")
     try:
         smoothing = float(src.get("smoothing_frames", base["smoothing_frames"]))
     except (TypeError, ValueError, OverflowError):
@@ -324,6 +331,7 @@ def parse_params(src, base=None):
         "hamer_stride": hamer_stride,
         "vggt_interval": vggt_interval,
         "sam_chunk_size": integer("sam_chunk_size", 1, optional=True),
+        "sam_hand_stride": sam_hand_stride,
         "postprocess": _to_bool(src.get("postprocess"), base["postprocess"]),
         "correction_floor_m": floor,
         "correction_preset": preset,
@@ -883,6 +891,7 @@ def run_job(job_id):
         vggt_frame_interval=params["vggt_interval"],
         static_camera=params.get("static_camera", False),
         sam_chunk_size=params.get("sam_chunk_size", DEFAULT_PARAMS["sam_chunk_size"]),
+        sam_hand_stride=params["sam_hand_stride"],
         person_selector=select_person if params.get("manual_select", True) else None,
         progress_callback=on_progress,
         cancel_check=lambda: _raise_if_cancelled(job_id),
@@ -1433,6 +1442,9 @@ def api_rerun(job_id):
         elif not params["static_camera"] and params["vggt_interval"] != src["params"]["vggt_interval"]:
             skip += (f"{SUB}_sam3d_feat.pt", f"{SUB}_vggt_camera.npz")
         if params["sam_chunk_size"] != src["params"].get("sam_chunk_size", DEFAULT_PARAMS["sam_chunk_size"]):
+            skip += (f"{SUB}_sam3d_feat.pt", f"{SUB}_sam3d_feat_static.pt")
+        if params["sam_hand_stride"] != src["params"].get(
+                "sam_hand_stride", DEFAULT_PARAMS["sam_hand_stride"]):
             skip += (f"{SUB}_sam3d_feat.pt", f"{SUB}_sam3d_feat_static.pt")
         for name in os.listdir(src_sub):
             path = os.path.join(src_sub, name)

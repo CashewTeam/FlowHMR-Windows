@@ -33,7 +33,9 @@ Everything else is set per run in the page's **Settings** card: sampling seed
 (`0`), CFG scale (`1.0`), flow-matching ODE steps (`20`), max frames at 30 fps
 (`900` = 30 seconds), automatic full-video frame detection (off), camera frame
 stride (`1`), static camera (off), SAM chunk (`16` frames; hand batch is automatically
-twice the chunk size), manual person selection (on) and post-processing (off).
+twice the chunk size), SAM hand sampling (every frame, or every 2/4 frames with
+linear interpolation in between), manual person selection (on) and
+post-processing (off).
 Query batching and SAM compilation are off by default; optional
 [acceleration settings](web_demo.md#adjust-settings) apply at service startup.
 
@@ -59,6 +61,7 @@ Workflow: [inference.md](inference.md).
 | `--vggt_interval` | `1` | Run camera estimation on every N-th frame; applies only when static camera is off |
 | `--static_camera` | off | Skip VGGT and use a fixed camera with approximate intrinsics; no VGGT weights required |
 | `--sam_chunk_size` | `16` | Frames per SAM body batch; hand batch is automatically twice this size |
+| `--sam_hand_stride` | `1` | Decode the two SAM hand decoders on one seeded frame per N frames and interpolate the rest; `2`/`4` speed up SAM at a small finger-detail cost |
 | `--overwrite` | off | Recompute cached video preprocessing, detection, camera, and SAM features |
 
 Results are saved under `output/<video stem>/<checkpoint stem>.npz` by default.
