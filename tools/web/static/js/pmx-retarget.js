@@ -7,6 +7,8 @@ import { makePoseOffsets, normalizePoseOffsets, PMX_BASELINE_VERSION } from "./p
 const JOINTS = 52;
 const UP = new Vector3(0, 1, 0);
 const EPSILON = 1e-8;
+const ROOT_LIFT_KERNEL = [1, 4, 6, 4, 1];
+const SOLE_CONTACT_RAMP = 5;
 const ZERO_ANGLES = [0, 0, 0];
 const wrapAngle = (value) => Math.abs(value) <= 180 ? value : (value + 540) % 360 - 180;
 const key = (name = "") => name.normalize("NFKC").toLowerCase().replace(/[\s_.:\-]/g, "");
@@ -278,6 +280,60 @@ const easeContact = (x) => {
   return t * t * (3 - 2 * t);
 };
 
+function soleGroundingProfile(motion, contacts, legs) {
+  const { frames, floor, soles } = motion;
+  if (soles?.length !== frames * 4) return null;
+  const weight = new Float32Array(frames * 4);
+  const clearance = new Float32Array(frames * 4);
+  const guard = new Float32Array(frames * 4);
+  const settle = new Float32Array(frames * 4);
+  const downward = new Float32Array(frames * 4);
+  for (const side of [0, 1]) {
+    const { length, sourceLength } = legs[side].chain;
+    const scale = Math.max(0.5, Math.min(1.4, sourceLength > EPSILON ? length / sourceLength : 1));
+    const part = 2 * side;
+    let hasSupport = false;
+    for (let f = 0; f < frames; f++) {
+      if (Math.max(contacts[f * 4 + part], contacts[f * 4 + part + 1]) > 0.75) {
+        hasSupport = true;
+        break;
+      }
+    }
+    if (!hasSupport) continue;
+    for (let frame = 0; frame < frames; frame++) {
+      // Contact flags are evidence of nearby support, not an instantaneous
+      // switch. The captured sole's height controls the approach and release.
+      let support = 0;
+      for (let f = Math.max(0, frame - SOLE_CONTACT_RAMP); f <= Math.min(frames - 1, frame + SOLE_CONTACT_RAMP); f++) {
+        const c = Math.max(contacts[f * 4 + part], contacts[f * 4 + part + 1]);
+        const ramp = easeContact(1 - Math.abs(f - frame) / (SOLE_CONTACT_RAMP + 1));
+        support = Math.max(support, ramp * easeContact((c - 0.55) / 0.4));
+      }
+      const lower = Math.max(0, Math.min(soles[frame * 4 + part], soles[frame * 4 + part + 1]) - floor);
+      for (let i = 0; i < 2; i++) {
+        const j = frame * 4 + part + i;
+        const height = Math.max(0, soles[j] - floor);
+        const from = Math.max(0, soles[(Math.max(0, frame - 1) * 4) + part + i] - floor);
+        const to = Math.max(0, soles[(Math.min(frames - 1, frame + 1) * 4) + part + i] - floor);
+        const step = Math.max(Math.abs(height - from), Math.abs(to - height));
+        // Preserve genuine lift-off and rapid swings. A foot already on the
+        // floor stays planted through its last frame before the lift.
+        const still = Math.max(easeContact((0.028 - step) / 0.020), easeContact((0.018 - height) / 0.015));
+        clearance[j] = scale * Math.max(0, height - 0.014);
+        const fit = support * easeContact((0.12 - height) / 0.106);
+        // Translate from the lower support point; fit the higher point with
+        // pitch. Otherwise a rising heel can pull the planted toe upward.
+        const anchor = easeContact((lower + 0.022 - height) / 0.016);
+        weight[j] = fit * anchor;
+        guard[j] = easeContact((0.10 - height) / 0.08);
+        settle[j] = fit * (0.20 + 0.80 * still);
+        downward[j] = still * easeContact((0.055 - height) / 0.04);
+      }
+    }
+  }
+  return { weight, clearance, guard, settle, downward };
+}
+
 function bridgeSoleContacts(motion) {
   const { contacts, soles, joints, floor, frames } = motion;
   if (soles?.length !== frames * 4) return contacts;
@@ -457,8 +513,13 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
   const boundY = rest.bounds?.min?.[1];
   const targetSole = Number.isFinite(probeY) ? probeY :
     (Number.isFinite(boundY) && boundY <= footJointY && footJointY - boundY < 0.25 ? boundY : footJointY - 0.015);
-  const hipHeightOffset = (bindPosition[map[0]].y - targetSole) - (source[0].y - sourceSole);
+  const sourceHipHeight = source[0].y - sourceSole;
+  const targetHipHeight = bindPosition[map[0]].y - targetSole;
   const support = Number.isFinite(floor) && contacts?.length === frames * 4 && probes.flat().some((p) => p.length > 0);
+  const rootLiftCache = support ? [false, true].map(() => ({
+    raw: new Float64Array(frames).fill(NaN),
+    median: new Float64Array(frames).fill(NaN),
+  })) : [];
 
   const sourceRotation = new Quaternion();
   const accessoryRotation = new Quaternion();
@@ -532,6 +593,21 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
       chain: makeChain(1 + s, 4 + s, 7 + s), ankleQ: new Quaternion(), toeQ: new Quaternion(),
       native, hasTarget: false, target: new Vector3(), targetDelta: new Vector3() };
   });
+  // Match the stride scale used by the leg solver. Hair, hats and other
+  // accessories can make the mesh bounds much taller than the character.
+  let sourceLegLength = 0, targetLegLength = 0;
+  for (const { chain: { length, sourceLength } } of legs) {
+    if (!Number.isFinite(length) || !Number.isFinite(sourceLength) || length <= EPSILON || sourceLength <= EPSILON) continue;
+    sourceLegLength += sourceLength;
+    targetLegLength += length;
+  }
+  const rootMotionScale = sourceLegLength > 0 ? targetLegLength / sourceLegLength : 1;
+  const sourceStandingY = Number.isFinite(floor) ? floor + sourceHipHeight : joints[1];
+  // Keep each actor's entry point on the shared stage. Scale height changes
+  // from the standing pelvis so a clip can start crouching or in midair.
+  const rootAnchor = new Vector3(joints[0], sourceStandingY, joints[2]);
+  const hipHeightOffset = targetHipHeight - sourceHipHeight;
+  const soleGrounding = support ? soleGroundingProfile(motion, soleContacts, legs) : null;
   const controllerLeg = new Map();
   for (const control of nativeIk.moving.values()) {
     for (let i = control.effector; i >= 0; i = parents[i]) {
@@ -596,7 +672,8 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
   }
 
   function alignRoot(frame) {
-    offset.fromArray(joints, frame * JOINTS * 3).sub(worldPosition[map[0]]);
+    offset.fromArray(joints, frame * JOINTS * 3).sub(rootAnchor).multiplyScalar(rootMotionScale)
+      .add(rootAnchor).sub(worldPosition[map[0]]);
     offset.y += hipHeightOffset;
   }
 
@@ -627,7 +704,7 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
     return joints[(frame * JOINTS + joint) * 3 + 1] + sourceProbe.copy(sourceFootOffsets[part]).applyQuaternion(sourceRotation).y;
   }
 
-  function levelFeet(frame, swing) {
+  function levelFeet(frame, swing, grounding) {
     for (const s of [0, 1]) {
       const leg = legs[s];
       const goal = soleTargets[s];
@@ -635,15 +712,26 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
       if (!leg.ik || leg.toe < 0 || !probes[s][0].length || !probes[s][1].length) continue;
       // Fit the visible sole on support. For single-part contact retain the
       // source's heel/toe lift, and leave an airborne foot's pitch untouched.
-      const heelConfidence = contactStrength(frame, 2 * s);
-      const toeConfidence = contactStrength(frame, 2 * s + 1);
+      const part = frame * 4 + 2 * s;
+      const heelConfidence = grounding ? grounding.settle[part] : contactStrength(frame, 2 * s);
+      const toeConfidence = grounding ? grounding.settle[part + 1] : contactStrength(frame, 2 * s + 1);
       const confidence = Math.max(heelConfidence, toeConfidence);
-      const weight = easeContact((confidence - 0.60) / 0.37);
+      let weight = grounding ? confidence : easeContact((confidence - 0.60) / 0.37);
+      if (grounding && (grounding.guard[part] > 0 || grounding.guard[part + 1] > 0)) {
+        // If support labels drop out while a captured sole is still low,
+        // retain the fit only as needed to keep the target shoe above ground.
+        const heelDepth = floor - offset.y - footPoint(probes[s][0], heel).y;
+        const toeDepth = floor - offset.y - footPoint(probes[s][1], toe).y;
+        weight = Math.max(weight, grounding.guard[part] * easeContact(heelDepth / 0.04),
+          grounding.guard[part + 1] * easeContact(toeDepth / 0.04));
+      }
       if (weight <= 0) continue;
-      const sourcePitch = sourceFootY(frame, 10 + s, 2 * s + 1) - sourceFootY(frame, 7 + s, 2 * s);
-      const lift = sourcePitch < 0
-        ? Math.max(-0.11, sourcePitch) * (1 - heelConfidence) * easeContact((toeConfidence - 0.5) / 0.47)
-        : Math.min(0.11, sourcePitch) * (1 - toeConfidence) * easeContact((heelConfidence - 0.5) / 0.47);
+      const sourcePitch = grounding ? grounding.clearance[part + 1] - grounding.clearance[part]
+        : sourceFootY(frame, 10 + s, 2 * s + 1) - sourceFootY(frame, 7 + s, 2 * s);
+      const lift = grounding ? Math.max(-0.11, Math.min(0.11, sourcePitch))
+        : sourcePitch < 0
+          ? Math.max(-0.11, sourcePitch) * (1 - heelConfidence) * easeContact((toeConfidence - 0.5) / 0.47)
+          : Math.min(0.11, sourcePitch) * (1 - toeConfidence) * easeContact((heelConfidence - 0.5) / 0.47);
       const current = footPoint(probes[s][1], toe).y - footPoint(probes[s][0], heel).y;
       goal.y = current + (lift - current) * weight;
       goal.remaining = Math.PI * 0.18 * weight;
@@ -819,31 +907,41 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
     if (weight > 0) offset.y += Math.max(-0.12, Math.min(0.12, total / weight)) * depth / Math.max(1.3, weight);
   }
 
-  function plantFeet(frame, swing) {
-    levelFeet(frame, swing);
-    adjustCrouchHeight(frame);
+  function plantFeet(frame, swing, rootLift) {
+    // Measuring the root uses the original probes and fit; only the final
+    // ankle and toe targets use the continuous vertical support profile.
+    const grounding = rootLift === undefined ? null : soleGrounding;
+    if (rootLift !== undefined) offset.y += rootLift;
+    levelFeet(frame, swing, grounding);
+    if (rootLift === undefined) adjustCrouchHeight(frame);
     const feet = [0, 1];
     for (const s of feet) {
       if (!legs[s].ik) continue;
-      let heelWeight = 0, toeWeight = 0, heelLift = 0, toeLift = 0, locked = 0;
+      let heelWeight = 0, toeWeight = 0, heelLift = 0, toeLift = 0, locked = 0, floorGuard = 0;
       correction.set(0, 0, 0);
       for (const part of [0, 1]) {
         const i = s * 2 + part;
         const list = probes[s][part];
         const strength = contactStrength(frame, i);
-        if (strength <= 0.5 || !list.length) continue;
+        const j = frame * 4 + i;
+        const weight = grounding ? grounding.weight[j] : easeContact((strength - 0.5) * 2);
+        const guard = grounding?.guard[j] ?? 0;
+        if (!list.length || (strength <= 0.5 && weight <= 0 && guard <= 0)) continue;
         footPoint(list, foot).add(offset);
-        const pull = Math.max(-0.18, Math.min(0.18, floor - foot.y));
+        floorGuard = Math.max(floorGuard, guard * Math.min(0.18, floor - foot.y));
+        const height = floor + (grounding ? grounding.clearance[j] : 0);
+        let pull = Math.max(-0.18, Math.min(0.18, height - foot.y));
+        if (grounding && pull < 0) pull *= grounding.downward[j];
         if (part === 0) {
-          heelWeight = easeContact((strength - 0.5) * 2);
+          heelWeight = weight;
           heelLift = pull;
         } else {
-          toeWeight = easeContact((strength - 0.5) * 2);
+          toeWeight = weight;
           toeLift = pull;
         }
         const track = contact[i];
         const run = track?.runs[track.frameToRun[frame]];
-        if (run) {
+        if (run && strength > 0.5) {
           const blend = easeContact(Math.min((frame - run.start) / 3, (run.end - 1 - frame) / 3));
           const weight = blend * strength;
           correction.x += (run.anchor.x - foot.x) * weight;
@@ -851,12 +949,13 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
           locked += weight;
         }
       }
-      if (heelWeight <= 0 && toeWeight <= 0) continue;
+      if (heelWeight <= 0 && toeWeight <= 0 && !locked && floorGuard <= 0) continue;
       correction.multiplyScalar(1 / Math.max(1, locked)).clampLength(0, 0.085);
       // Blend heel-only, toe-only and both planted continuously. A low heel
       // entering contact should not instantly become the vertical target.
       correction.y = heelLift * heelWeight * (1 - toeWeight) + toeLift * toeWeight * (1 - heelWeight) +
         Math.max(heelLift, toeLift) * heelWeight * toeWeight;
+      if (floorGuard > 0) correction.y = Math.max(correction.y, floorGuard);
       if (correction.lengthSq() > 1e-8) {
         const leg = legs[s];
         desiredAnkle.copy(worldPosition[leg.ankle]).add(correction);
@@ -866,8 +965,9 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
     }
     if (limbOverrides.size) pose(frame, swing, limbOverrides);
 
-    // Only small residual reach errors move the body vertically. Horizontal
-    // placement remains the original motion, even when both feet are planted.
+    if (rootLift !== undefined) return;
+    // Only small residual reach errors move the body vertically. Foot
+    // planting does not change the proportional horizontal path.
     let sole = Infinity, confidence = 0;
     for (const s of feet) for (const part of [0, 1]) {
       const i = s * 2 + part;
@@ -973,8 +1073,7 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
     return track;
   }) : [];
 
-  function evaluate(frame) {
-    if (!Number.isInteger(frame) || frame < 0 || frame >= frames) return false;
+  function poseForGround(frame) {
     const swing = poseBase(frame);
     if (handPair(frame, worldPosition, handCorrection)) {
       for (const [side, { chain }] of arms.entries()) {
@@ -984,7 +1083,52 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
       pose(frame, swing, limbOverrides);
     }
     alignRoot(frame);
-    if (support) plantFeet(frame, swing);
+    return swing;
+  }
+
+  const clipFrame = (frame) => Math.min(frames - 1, Math.max(0, frame));
+  function measureRootLift(frame, raw) {
+    frame = clipFrame(frame);
+    if (Number.isNaN(raw[frame])) {
+      // In the air there is no correction to measure.
+      let active = false;
+      for (let part = 0; part < 4; part++) {
+        if (contactStrength(frame, part) > 0.5) { active = true; break; }
+      }
+      if (!active) raw[frame] = 0;
+      else {
+        const swing = poseForGround(frame);
+        const height = offset.y;
+        plantFeet(frame, swing);
+        raw[frame] = offset.y - height;
+      }
+    }
+    return raw[frame];
+  }
+
+  function stableRootLift(frame) {
+    const { raw, median } = rootLiftCache[Number(ikMode)];
+    let height = 0;
+    for (let i = 0; i < ROOT_LIFT_KERNEL.length; i++) {
+      const f = clipFrame(frame + i - 2);
+      if (Number.isNaN(median[f])) {
+        const window = [-2, -1, 0, 1, 2].map((d) => measureRootLift(f + d, raw));
+        window.sort((a, b) => a - b);
+        median[f] = window[2];
+      }
+      height += median[f] * ROOT_LIFT_KERNEL[i];
+    }
+    return height / 16;
+  }
+
+  function evaluate(frame) {
+    if (!Number.isInteger(frame) || frame < 0 || frame >= frames) return false;
+    // Reject short contact-induced root pulses and blend the remaining lift.
+    // Sample by frame so seeking and VMD baking produce the same pose. The
+    // proportional root motion stays intact and the feet solve at the new height.
+    const rootLift = support ? stableRootLift(frame) : 0;
+    const swing = poseForGround(frame);
+    if (support) plantFeet(frame, swing, rootLift);
     applyJointEdits();
     if (ikMode) placeIkControllers();
     return true;
@@ -1171,6 +1315,6 @@ export function createPmxRetarget(mesh, rest, motion, { poseOffsets = null } = {
     return mirrored && shoulderAngles(to, mirrored, -1).map((angle) => Number(angle.toFixed(2)));
   }
   return { apply, vmd, setPoseOffsets, nativeIkAvailable: nativeIk.available, mirrorRotation, matched: map.filter((i) => i >= 0).length,
-    sourceToTarget: Array.from(map), skippedGrants, support };
+    sourceToTarget: Array.from(map), skippedGrants, support, rootMotionScale };
 }
 

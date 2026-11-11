@@ -209,6 +209,7 @@ export function initViewer(preview) {
   const character = initPreviewCharacter(() => actors, () => {
     poseEditor.setActors(actors, character.focused?.id);
     syncSkeletonDisplay();
+    if (state.meta && state.frame >= 0) updateFrameRoot(state.frame);
     labelBody();
   }, (error) => setText($("viewportObject"), error));
 
@@ -566,7 +567,13 @@ export function initViewer(preview) {
     const root = new THREE.Vector3();
     for (const actor of actors) {
       const i = Math.min(actor.meta.num_frames - 1, Math.max(0, actorFrame(actor, f)));
-      const [x, z] = actor.meta.root_trajectory[i];
+      let [x, z] = actor.meta.root_trajectory[i];
+      const scale = actor.character?.rig.rootMotionScale ?? 1;
+      if (scale !== 1) {
+        const [startX, startZ] = actor.meta.root_trajectory[0];
+        x = startX + (x - startX) * scale;
+        z = startZ + (z - startZ) * scale;
+      }
       root.x += x * actor.cos + z * actor.sin + actor.group.position.x;
       root.z += z * actor.cos - x * actor.sin + actor.group.position.z;
     }
@@ -593,14 +600,7 @@ export function initViewer(preview) {
     body.geometry.computeVertexNormals();
   }
 
-  function setFrame(f) {
-    const m = state.meta;
-    if (!m || !actors.length) return;
-    f = Math.max(0, Math.min(m.num_frames - 1, f));
-    if (f === state.frame) return;
-    state.frame = f;
-    for (const actor of actors) drawActorFrame(actor, f);
-
+  function updateFrameRoot(f) {
     const root = frameRoot(f);
     sun.position.copy(root).add(SUN_OFFSET);
     sun.target.position.copy(root);
@@ -610,6 +610,16 @@ export function initViewer(preview) {
       controls.target.add(delta);
     }
     state.prevRoot.copy(root);
+  }
+
+  function setFrame(f) {
+    const m = state.meta;
+    if (!m || !actors.length) return;
+    f = Math.max(0, Math.min(m.num_frames - 1, f));
+    if (f === state.frame) return;
+    state.frame = f;
+    for (const actor of actors) drawActorFrame(actor, f);
+    updateFrameRoot(f);
     scrub.value = f;
     const displayFrame = (state.scene ? sourceStart(m) : 0) + f + 1;
     $("frameLabel").textContent = `${displayFrame} / ${(state.scene ? sourceStart(m) : 0) + m.num_frames}`;
