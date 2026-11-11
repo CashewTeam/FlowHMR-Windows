@@ -145,7 +145,7 @@ export default Object.freeze({
   "sam.batch_hint": "手部批次為此值的兩倍。顯示記憶體不足時調低。",
   "sam.setting_note": "手動批次可按顯示記憶體調整。處理起止幀在底部時間軸設定。",
   "sam.hand_stride": "SAM 手部取樣",
-  "sam.hand_stride_hint": "間隔越大處理速度越快，略微降低品質",
+  "sam.hand_stride_hint": "建議只在開啟手指精修時使用：間隔越大處理速度越快，略微降低品質",
   "sam.hand_stride_off": "逐幀（關閉）",
   "sam.hand_stride_two": "每 2 幀",
   "sam.hand_stride_four": "每 4 幀",

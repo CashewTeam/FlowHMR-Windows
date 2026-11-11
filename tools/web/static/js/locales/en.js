@@ -145,7 +145,7 @@ export default Object.freeze({
   "sam.batch_hint": "Hand batches use twice this value. Lower it if VRAM runs out.",
   "sam.setting_note": "Set a manual batch size to match your VRAM. Set the frame range in the timeline below.",
   "sam.hand_stride": "SAM hand sampling",
-  "sam.hand_stride_hint": "Larger intervals process faster with a slight quality drop",
+  "sam.hand_stride_hint": "Recommended only with finger refinement enabled: larger intervals run faster with a slight quality drop",
   "sam.hand_stride_off": "Every frame (off)",
   "sam.hand_stride_two": "Every 2 frames",
   "sam.hand_stride_four": "Every 4 frames",

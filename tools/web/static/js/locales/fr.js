@@ -145,7 +145,7 @@ export default Object.freeze({
   "sam.batch_hint": "Les lots de mains font le double. Réduisez la valeur si la mémoire vidéo manque.",
   "sam.setting_note": "Adaptez la taille du lot à la mémoire vidéo. Réglez la plage d’images dans la chronologie ci-dessous.",
   "sam.hand_stride": "Échantillonnage des mains SAM",
-  "sam.hand_stride_hint": "Un intervalle plus grand accélère le traitement avec une légère baisse de qualité",
+  "sam.hand_stride_hint": "Recommandé uniquement avec l'affinage des doigts activé : un intervalle plus grand accélère le traitement avec une légère baisse de qualité",
   "sam.hand_stride_off": "Chaque image (désactivé)",
   "sam.hand_stride_two": "Toutes les 2 images",
   "sam.hand_stride_four": "Toutes les 4 images",

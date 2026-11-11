@@ -145,7 +145,7 @@ export default Object.freeze({
   "sam.batch_hint": "손 배치는 이 값의 두 배입니다. VRAM이 부족하면 낮추세요.",
   "sam.setting_note": "수동 배치 크기를 VRAM에 맞추세요. 처리 범위는 아래 타임라인에서 설정합니다.",
   "sam.hand_stride": "SAM 손 샘플링",
-  "sam.hand_stride_hint": "간격이 클수록 처리 속도는 빨라지지만 품질은 약간 떨어집니다",
+  "sam.hand_stride_hint": "손가락 보정을 켰을 때만 사용하는 것을 권장합니다: 간격이 클수록 처리 속도는 빨라지지만 품질은 약간 떨어집니다",
   "sam.hand_stride_off": "매 프레임(끔)",
   "sam.hand_stride_two": "2프레임마다",
   "sam.hand_stride_four": "4프레임마다",

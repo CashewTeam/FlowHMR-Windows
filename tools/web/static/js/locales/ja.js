@@ -145,7 +145,7 @@ export default Object.freeze({
   "sam.batch_hint": "手のバッチはこの値の 2 倍です。VRAM が足りなければ下げてください。",
   "sam.setting_note": "手動のバッチサイズは VRAM に合わせて調整できます。処理範囲は下のタイムラインで設定します。",
   "sam.hand_stride": "SAM ハンドサンプリング",
-  "sam.hand_stride_hint": "間隔が大きいほど高速になりますが、品質はわずかに低下します",
+  "sam.hand_stride_hint": "指の補正を有効にしている場合のみ使用することをおすすめします：間隔が大きいほど高速になりますが、品質はわずかに低下します",
   "sam.hand_stride_off": "毎フレーム（オフ）",
   "sam.hand_stride_two": "2 フレームごと",
   "sam.hand_stride_four": "4 フレームごと",
