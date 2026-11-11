@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import json
 import os
+import pickle
 import sys
 import time
 
@@ -59,6 +60,7 @@ def _load_model(device):
 
     from flowhmr.core.bodymodels.licensed_data import read_registered_arrays
     from flowhmr.model_files import HAMER_FILES, HAMER_RUNTIME, MANO_FILES, resolve_model
+    from flowhmr.utils.runtime_hamer import HAMER_ISSUES
 
     sys.path.insert(0, str(HAMER_RUNTIME))
     from hamer.configs import get_config
@@ -67,10 +69,16 @@ def _load_model(device):
 
     checkpoint, config, mean_params = map(resolve_model, HAMER_FILES)
     # The head predicts MANO rotations; no mesh reconstruction or generated MANO file is needed.
-    mano = read_registered_arrays(resolve_model(MANO_FILES[1]), ("v_template", "hands_components", "kintree_table"))
+    try:
+        mano = read_registered_arrays(resolve_model(MANO_FILES[1]),
+                                      ("v_template", "hands_components", "kintree_table"))
+    except FileNotFoundError as error:
+        raise ValueError(HAMER_ISSUES["hamer_mano_missing"]) from error
+    except (OSError, EOFError, pickle.UnpicklingError, ValueError, TypeError, KeyError, AttributeError) as error:
+        raise ValueError(HAMER_ISSUES["hamer_mano_invalid"]) from error
     if (mano["v_template"].shape != (778, 3) or mano["hands_components"].shape != (45, 45)
             or mano["kintree_table"].shape != (2, 16)):
-        raise ValueError("HaMeR requires the original MANO v1.2 model package")
+        raise ValueError(HAMER_ISSUES["hamer_mano_invalid"])
 
     cfg = get_config(str(config))
     cfg.defrost()
@@ -140,8 +148,11 @@ def run(video, boxes_path, start, gpu, target, stride=1):
         valid = finite & (size.min(-1) > 2) & (inside.min(-1) >= 4) & (inside.prod(-1) >= .1 * size.prod(-1))
         sampled = _sample_mask(valid, stride)
         if sampled.any():
+            from flowhmr.runtime_rocm import configure_windows_hip
+
             _progress(0, "正在加载 HaMeR 手指模型")
             device = torch.device("cuda", gpu)
+            configure_windows_hip(torch, attention=True)
             torch.cuda.set_device(device)
             backbone, head, cfg = _load_model(device)
             mean = 255 * np.asarray(cfg.MODEL.IMAGE_MEAN, dtype=np.float32)[:, None, None]

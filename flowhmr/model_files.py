@@ -35,11 +35,11 @@ def ensure_model_folders():
 
 
 def file_present(path):
-    """True when the file exists and matches the size its source publishes.
+    """Require the file and check published metadata for pinned models.
 
     Existence alone is not enough: an interrupted download leaves a file that
-    looks present and then fails much later inside torch.load. The import is
-    deferred because model_integrity reads this module for the model root.
+    looks present and then fails much later inside torch.load. Custom models
+    and the editable FlowHMR configuration are not pinned to a published hash.
     """
     from . import model_integrity
 

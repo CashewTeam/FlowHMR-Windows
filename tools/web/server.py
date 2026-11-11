@@ -9,6 +9,8 @@ Pipeline per job (runs on one GPU, jobs are queued):
     -> SAM-3D-Body tokens -> FlowHMR flow-matching generation
 """
 import argparse
+import base64
+import binascii
 import copy
 import hashlib
 import json
@@ -47,9 +49,11 @@ from flowhmr.model_files import (
     SMPLH_FILES, core_model_paths, ensure_model_folders, file_present, flowhmr_paths, missing_model_paths, resolve_model,
 )
 from flowhmr import model_integrity
+from flowhmr.model_import import ModelImporter, ModelImportError
 from flowhmr.model_inventory import model_inventory
 from flowhmr.model_downloads import ACTIVE_DOWNLOAD, DownloadError, ModelDownloads, missing_downloads
 from flowhmr.runtime_environments import RUNTIME
+from flowhmr import runtime_rocm
 
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 STAGES = [
@@ -85,6 +89,8 @@ for _extension, _mime_type in (
     mimetypes.add_type(_mime_type, _extension)
 
 MODEL_DOWNLOADS = ModelDownloads(app.logger)
+MODEL_IMPORTER = ModelImporter()
+MODEL_VERIFY_LOCK = threading.Lock()
 RUNTIME.logger = app.logger
 RUNTIME_SWITCH_LOCK = threading.Lock()
 
@@ -108,12 +114,21 @@ class JobCancelled(Exception):
     pass
 
 
+class UserMessage(ValueError):
+    def __init__(self, message, code, **params):
+        super().__init__(message)
+        self.code = code
+        self.params = params
+
+
 # --------------------------------------------------------------------------- engine
 def checked_model_paths(args):
     paths = core_model_paths(args.ckpt, args.model_cfg)
     missing = missing_model_paths(paths)
     if missing:
-        raise FileNotFoundError("缺少推理模型或配置。请在右上角「模型」查看：\n  " + "\n  ".join(missing))
+        listing = "\n".join(missing)
+        raise UserMessage("推理模型或配置未就绪。请在右上角「模型」查看：\n" + listing,
+                          "model_files_not_ready", files=listing)
     return paths
 
 
@@ -123,11 +138,20 @@ def load_engine(args):
     ckpt, model_cfg = paths[:2]
 
     import torch
-    from flowhmr.pipeline.v2m_inference import V2MInferenceEngine
 
     device = torch.device(args.device)
     if device.type == "cuda":
+        runtime_rocm.configure_windows_hip(torch, attention=True)
+        if sys.platform == "win32" and torch.version.hip and device.index is None:
+            architecture = runtime_rocm.ARCH if RUNTIME.active == runtime_rocm.PROFILE else None
+            try:
+                args.device = f"cuda:{runtime_rocm.gpu_ordinal(torch, architecture)}"
+            except RuntimeError as error:
+                raise UserMessage("没有可用于当前 ROCm 环境的显卡。请检查驱动和显卡设置。", "runtime_rocm_gpu_required") from error
+            device = torch.device(args.device)
         torch.cuda.set_device(device.index if device.index is not None else 0)
+    from flowhmr.pipeline.v2m_inference import V2MInferenceEngine
+
     return V2MInferenceEngine.build(
         ckpt=str(ckpt), model_cfg_path=str(model_cfg), device=args.device,
     )
@@ -188,9 +212,9 @@ def _read_sole_fit_strength(settings):
     try:
         value = float(raw)
     except (TypeError, ValueError, OverflowError):
-        raise ValueError("脚掌贴地强度须为 0 到 1 的数字。") from None
+        raise UserMessage("脚掌贴地强度须为 0 到 1 的数字。", "param_sole_fit") from None
     if isinstance(raw, bool) or not 0.0 <= value <= 1.0:
-        raise ValueError("脚掌贴地强度须为 0 到 1 的数字。")
+        raise UserMessage("脚掌贴地强度须为 0 到 1 的数字。", "param_sole_fit")
     return value
 
 
@@ -206,10 +230,10 @@ def parse_params(src, base=None):
             return base[key]
         try:
             value = cast(raw)
-        except (TypeError, ValueError):
-            raise ValueError(f"invalid {key}: {raw!r}")
+        except (TypeError, ValueError, OverflowError):
+            raise UserMessage(f"invalid {key}: {raw!r}", "param_numeric", field=key) from None
         if not lo <= value <= hi:
-            raise ValueError(f"{key} must be between {lo} and {hi}")
+            raise UserMessage(f"{key} must be between {lo} and {hi}", "param_bounds", field=key, min=lo, max=hi)
         return value
 
     def integer(key, minimum, *, optional=False):
@@ -218,22 +242,22 @@ def parse_params(src, base=None):
             return None
         value = int(raw.strip()) if isinstance(raw, str) and raw.strip().isdecimal() else raw
         if type(value) is not int or value < minimum:
-            raise ValueError(f"{key} must be an integer >= {minimum}")
+            raise UserMessage(f"{key} must be an integer >= {minimum}", "param_integer", field=key, min=minimum)
         return value
 
     start = integer("start_frame", 0)
     end = integer("end_frame", 0, optional=True)
     if end is not None and end < start:
-        raise ValueError("结束帧不能早于起始帧。")
+        raise UserMessage("结束帧不能早于起始帧。", "param_frame_order")
     hamer_stride = integer("hamer_stride", 1)
     if hamer_stride not in HAMER_STRIDES:
-        raise ValueError("HaMeR 采样间隔须为 1、2、3 或 4 帧。")
+        raise UserMessage("HaMeR 采样间隔须为 1、2、3 或 4 帧。", "param_hamer_stride")
     try:
         smoothing = float(src.get("smoothing_frames", base["smoothing_frames"]))
-    except (TypeError, ValueError):
-        raise ValueError("平滑强度须为大于或等于 0 的数字。") from None
+    except (TypeError, ValueError, OverflowError):
+        raise UserMessage("平滑强度须为大于或等于 0 的数字。", "param_smoothing") from None
     if not math.isfinite(smoothing) or smoothing < 0:
-        raise ValueError("平滑强度须为大于或等于 0 的有限值。")
+        raise UserMessage("平滑强度须为大于或等于 0 的有限值。", "param_smoothing")
 
     floor = src.get("correction_floor_m", base["correction_floor_m"])
     if floor in (None, "", "null", "auto"):
@@ -241,14 +265,14 @@ def parse_params(src, base=None):
     else:
         try:
             floor = float(floor)
-        except (ValueError, TypeError):
-            raise ValueError("修正地面高度须为有效数字（米）。") from None
+        except (ValueError, TypeError, OverflowError):
+            raise UserMessage("修正地面高度须为有效数字（米）。", "param_floor") from None
         if not math.isfinite(floor):
-            raise ValueError("修正地面高度须为有限值。")
+            raise UserMessage("修正地面高度须为有限值。", "param_floor")
 
     preset = src.get("correction_preset", base["correction_preset"])
     if preset not in ("normal", "strong"):
-        raise ValueError("脚步锁定须选择标准或加强。")
+        raise UserMessage("脚步锁定须选择标准或加强。", "param_lock")
 
     vggt_interval = number("vggt_interval", int, 0, 120)
     return {
@@ -344,6 +368,7 @@ def _legacy_job(job_id, directory):
         "ext": os.path.splitext(input_name)[1], "status": status,
         "message": "Done" if done else "Recovered from an earlier session; detailed progress is unavailable.",
         "error": None if done else "This earlier run did not have saved job details.",
+        "error_code": None if done else "job_details_unavailable",
         "progress": 100 if done else 0, "created": created,
         "started": None, "finished": created if done else None,
         "num_frames": meta.get("num_frames") if done else None, "fps": meta.get("fps", 30),
@@ -392,6 +417,7 @@ def restore_jobs():
                        message="Run stopped when FlowHMR restarted." if cancelled
                        else "Run interrupted when FlowHMR restarted.",
                        error=None if cancelled else "The server restarted before this run finished.",
+                       error_code=None if cancelled else "job_interrupted", error_params={},
                        finished=interrupted_at, loading_models=False)
             for stage in job.get("stages", []):
                 if stage.get("status") in ("running", "waiting_user"):
@@ -503,8 +529,11 @@ def worker_loop():
                 for s in job["stages"]:
                     if s["status"] == "running":
                         s["status"] = "cancelled" if cancelled else "failed"
+                detail = f"{type(e).__name__}: {e}"
+                code, params = (e.code, e.params) if isinstance(e, UserMessage) else ("job_failed", {"detail": detail})
                 job.update(status="cancelled" if cancelled else "failed",
-                           error=None if cancelled else f"{type(e).__name__}: {e}",
+                           error=None if cancelled else detail, error_code=None if cancelled else code,
+                           error_params={} if cancelled else params,
                            message="Stopped by user" if cancelled else "Failed", loading_models=False, finished=time.time())
                 _persist_job_locked(job)
             if not cancelled:
@@ -634,7 +663,7 @@ def _scene_status_locked(parent, members):
     completed = [j for j in members if j["status"] == "done"]
     view = {**parent, "selected_person": None, "candidates": None,
             "person_count": len(members), "person_done": len(completed),
-            "has_fbx": False}
+            "has_fbx": False, "error": None, "error_code": None, "error_params": {}}
     if active:
         order = ("waiting_user", "running", "cancel_requested", "queued", "uploading")
         current = min(active, key=lambda j: (order.index(j["status"]), j["created"]))
@@ -658,10 +687,14 @@ def _scene_status_locked(parent, members):
     elif completed:
         error = parent.get("scene_error")
         view.update(status="needs_alignment", progress=95, error=error, scene_needs_build=True,
+                    error_code="scene_failed" if error else None,
+                    error_params={"detail": parent.get("scene_error_detail") or error} if error else {},
                     message=error or "动作已生成，可按原片对齐多人场景。")
     else:
         failures = [j for j in members if j["status"] == "failed"]
-        view.update(status="failed" if failures else "cancelled", error=failures[0].get("error") if failures else None)
+        view.update(status="failed" if failures else "cancelled")
+        if failures:
+            view.update({key: failures[0].get(key) for key in ("error", "error_code", "error_params")})
     return view
 
 
@@ -707,7 +740,7 @@ def _assemble_scene(batch, *, automatic):
     except JobCancelled:
         update_job(batch, scene_state="cancelled")
     except Exception as exc:
-        update_job(batch, scene_state="failed", scene_error=f"多人场景对齐失败：{exc}")
+        update_job(batch, scene_state="failed", scene_error=f"多人场景对齐失败：{exc}", scene_error_detail=str(exc))
         traceback.print_exc()
     finally:
         if own_extractor is not None:
@@ -722,7 +755,7 @@ def run_job(job_id):
         job = JOBS[job_id]
         params = job["params"]
         if params["hamer"] and not hamer_available(ARGS.device):
-            raise RuntimeError(MISSING_HAMER)
+            raise UserMessage(MISSING_HAMER, "hamer_not_ready")
         loading_models = ENGINE is None
         job.update(status="running", loading_models=loading_models, started=time.time(),
                    message="首次运行，正在加载推理模型…" if loading_models else "Starting")
@@ -982,15 +1015,31 @@ def local_model_request():
     return origin is None or origin == request.host_url.rstrip("/")
 
 
+def api_error(error_code, message, status, **params):
+    return jsonify(error=message, error_code=error_code, error_params=params), status
+
+
+def jobs_active():
+    with JOBS_LOCK:
+        return any(job["status"] in ACTIVE_STATUSES or job.get("scene_state") in ACTIVE_STATUSES
+                   for job in JOBS.values())
+
+
+def model_download_active():
+    return MODEL_DOWNLOADS.snapshot()["status"] in ACTIVE_DOWNLOAD
+
+
 @app.route("/api/info")
 def api_info():
     config = getattr(ARGS, "model_cfg", None)
     inventory = model_inventory(ARGS.device, ARGS.ckpt, config)
     if local_model_request():
-        plan = missing_downloads(ARGS.device, ARGS.ckpt, config)
+        plan = missing_downloads(ARGS.device, ARGS.ckpt, config, include_hamer=True)
+        inventory["hamer_download_bytes"] = sum(asset.size for asset in plan.pop("hamer", ()))
         inventory["downloadable"] = list(plan)
         inventory["download_bytes"] = sum(asset.size for assets in plan.values() for asset in assets)
         inventory["download"] = MODEL_DOWNLOADS.snapshot()
+        inventory["import"] = MODEL_IMPORTER.status()
     return jsonify({
         "model": flowhmr_paths(ARGS.ckpt, config)[0].name, "device": ARGS.device,
         "models_loaded": ENGINE is not None,
@@ -1011,66 +1060,68 @@ def api_info():
 @app.get("/api/runtime")
 def api_runtime():
     if not local_model_request():
-        return jsonify(error="请在本机 FlowHMR 窗口管理运行环境。"), 403
+        return api_error("runtime_local_only", "请在本机 FlowHMR 窗口管理运行环境。", 403)
     return jsonify(RUNTIME.details())
 
 
 @app.post("/api/runtime/download")
 def api_runtime_download():
     if not local_model_request():
-        return jsonify(error="请在本机 FlowHMR 窗口管理运行环境。"), 403
+        return api_error("runtime_local_only", "请在本机 FlowHMR 窗口管理运行环境。", 403)
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or not isinstance(data.get("version"), str):
-        return jsonify(error="请选择运行环境版本。"), 400
+        return api_error("runtime_version_required", "请选择运行环境版本。", 400)
     with RUNTIME_SWITCH_LOCK:
         if RUNTIME.summary()["pending_restart"]:
-            return jsonify(error="请先重启运行环境，完成切换。"), 409
+            return api_error("runtime_restart_required", "请先重启运行环境，完成切换。", 409)
         try:
             return jsonify(RUNTIME.start(data["version"]))
         except DownloadError as error:
-            return jsonify(error=str(error)), 400
+            return api_error(error.code, str(error), 400, **error.params)
 
 
 @app.post("/api/runtime/download/stop")
 def api_runtime_download_stop():
     if not local_model_request():
-        return jsonify(error="请在本机 FlowHMR 窗口管理运行环境。"), 403
+        return api_error("runtime_local_only", "请在本机 FlowHMR 窗口管理运行环境。", 403)
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or not isinstance(data.get("id"), str):
-        return jsonify(error="无效的下载任务。"), 400
+        return api_error("download_task_invalid", "无效的下载任务。", 400)
     return jsonify(RUNTIME.stop(data["id"]))
 
 
 @app.post("/api/runtime/select")
 def api_runtime_select():
     if not local_model_request():
-        return jsonify(error="请在本机 FlowHMR 窗口管理运行环境。"), 403
+        return api_error("runtime_local_only", "请在本机 FlowHMR 窗口管理运行环境。", 403)
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or not isinstance(data.get("version"), str):
-        return jsonify(error="请选择运行环境版本。"), 400
+        return api_error("runtime_version_required", "请选择运行环境版本。", 400)
     with RUNTIME_SWITCH_LOCK:
-        with JOBS_LOCK:
-            busy = any(job["status"] in ACTIVE_STATUSES for job in JOBS.values())
-        if busy or any(download.snapshot()["status"] in ACTIVE_DOWNLOAD for download in (RUNTIME, MODEL_DOWNLOADS)):
-            return jsonify(error="有生成或下载任务在运行，完成或停止后再切换。"), 409
+        if (jobs_active() or model_download_active() or RUNTIME.snapshot()["status"] in ACTIVE_DOWNLOAD
+                or MODEL_IMPORTER.active or MODEL_VERIFY_LOCK.locked()):
+            return api_error("runtime_busy", "有生成、模型操作或下载任务在运行，完成后再切换。", 409)
         try:
             return jsonify(RUNTIME.select(data["version"]))
         except DownloadError as error:
-            return jsonify(error=str(error)), 400
+            return api_error(error.code, str(error), 400, **error.params)
         except OSError:
             app.logger.exception("Could not save runtime selection")
-            return jsonify(error="无法保存运行环境选择，请检查目录写入权限。"), 500
+            return api_error("runtime_save_failed", "无法保存运行环境选择，请检查目录写入权限。", 500)
 
 
 def requires_runtime(view):
     @wraps(view)
     def guarded(*args, **kwargs):
         with RUNTIME_SWITCH_LOCK:
+            if MODEL_IMPORTER.active:
+                return api_error("model_import_busy", "正在导入模型，请等导入完成。", 409)
             state = RUNTIME.summary()
             if not state["ready"]:
                 message = ("请先重启运行环境，完成切换。" if state["pending_restart"] else
-                           "请在右上角「运行环境」下载并启用 CUDA 运行环境。")
-                return jsonify(error=message, code="runtime_required"), 409
+                           "请在右上角「运行环境」下载并启用与显卡匹配的运行环境。")
+                return jsonify(error=message, code="runtime_required",
+                               error_code="runtime_restart_required" if state["pending_restart"] else "runtime_required"), 409
             return view(*args, **kwargs)
     return guarded
 
@@ -1078,34 +1129,70 @@ def requires_runtime(view):
 @app.route("/api/models/download", methods=["GET", "POST"])
 def api_model_download():
     if not local_model_request():
-        return jsonify(error="请在本机 FlowHMR 窗口下载模型。"), 403
+        return api_error("models_local_only", "请在本机 FlowHMR 窗口管理模型。", 403)
     if request.method == "GET":
         return jsonify(MODEL_DOWNLOADS.snapshot())
-    if request.get_json(silent=True) != {}:
-        return jsonify(error="无效的下载请求。"), 400
+    body = request.get_json(silent=True)
+    if body not in ({}, {"group": "hamer"}):
+        return api_error("download_invalid", "无效的下载请求。", 400)
     with RUNTIME_SWITCH_LOCK:
         if RUNTIME.summary()["pending_restart"]:
-            return jsonify(error="请先重启运行环境，完成切换。"), 409
+            return api_error("runtime_restart_required", "请先重启运行环境，完成切换。", 409)
+        if MODEL_IMPORTER.active or MODEL_VERIFY_LOCK.locked():
+            return api_error("model_operation_busy", "正在导入或校验模型，请稍后再下载。", 409)
         config = getattr(ARGS, "model_cfg", None)
-        return jsonify(MODEL_DOWNLOADS.start(missing_downloads(ARGS.device, ARGS.ckpt, config)))
+        hamer = body.get("group") == "hamer"
+        plan = missing_downloads(ARGS.device, ARGS.ckpt, config, include_hamer=hamer)
+        if hamer:
+            plan = {"hamer": plan["hamer"]} if "hamer" in plan else {}
+        return jsonify(MODEL_DOWNLOADS.start(plan))
 
 
 @app.route("/api/models/download/stop", methods=["POST"])
 def api_stop_model_download():
     if not local_model_request():
-        return jsonify(error="请在本机 FlowHMR 窗口操作。"), 403
+        return api_error("models_local_only", "请在本机 FlowHMR 窗口管理模型。", 403)
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or not isinstance(data.get("id"), str):
-        return jsonify(error="无效的下载任务。"), 400
+        return api_error("download_task_invalid", "无效的下载任务。", 400)
     return jsonify(MODEL_DOWNLOADS.stop(data["id"]))
 
 
 @app.route("/api/models/verify", methods=["POST"])
 def api_verify_models():
-    """Re-read every published model file and compare its SHA-256 with the source."""
+    """Check the models this installation actually uses."""
     if not local_model_request():
-        return jsonify(error="请在本机 FlowHMR 窗口校验模型。"), 403
-    return jsonify(model_integrity.summary(deep=True))
+        return api_error("models_local_only", "请在本机 FlowHMR 窗口管理模型。", 403)
+    with RUNTIME_SWITCH_LOCK:
+        if MODEL_IMPORTER.active or model_download_active() or not MODEL_VERIFY_LOCK.acquire(blocking=False):
+            return api_error("model_operation_busy", "正在下载、导入或校验模型，请稍后再校验。", 409)
+    try:
+        required = core_model_paths(ARGS.ckpt, getattr(ARGS, "model_cfg", None))
+        return jsonify(model_integrity.summary(deep=True, required_paths=required))
+    finally:
+        MODEL_VERIFY_LOCK.release()
+
+
+@app.route("/api/models/import", methods=["GET", "POST"])
+def api_model_import():
+    if not local_model_request():
+        return api_error("models_local_only", "请在本机 FlowHMR 窗口管理模型。", 403)
+    if request.method == "GET":
+        return jsonify(MODEL_IMPORTER.status())
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("path"), str):
+        return api_error("invalid_source", "请选择一个已解压的模型文件夹。", 400)
+    with RUNTIME_SWITCH_LOCK:
+        if RUNTIME.summary()["pending_restart"]:
+            return api_error("runtime_restart_required", "请先重启运行环境，完成切换。", 409)
+        if jobs_active():
+            return api_error("model_import_jobs_active", "请先等待当前生成结束或停止任务，再导入模型。", 409)
+        if MODEL_IMPORTER.active or model_download_active() or MODEL_VERIFY_LOCK.locked():
+            return api_error("model_operation_busy", "正在下载、导入或校验模型，请稍后再导入。", 409)
+        try:
+            return jsonify(MODEL_IMPORTER.start(body["path"])), 202
+        except ModelImportError as error:
+            return api_error(error.code, "无法打开这个模型文件夹。", 400)
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -1113,14 +1200,15 @@ def api_verify_models():
 def api_upload():
     f = request.files.get("video")
     if f is None or not f.filename:
-        return jsonify({"error": "no video file"}), 400
+        return api_error("video_required", "请选择一个视频文件。", 400)
     ext = os.path.splitext(f.filename)[1].lower()
     if ext not in VIDEO_EXTS:
-        return jsonify({"error": f"unsupported format {ext}; use {', '.join(sorted(VIDEO_EXTS))}"}), 400
+        formats = ", ".join(sorted(VIDEO_EXTS))
+        return api_error("video_format", f"unsupported format {ext}; use {formats}", 400, ext=ext, formats=formats)
     try:
         params = parse_params(request.form)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    except UserMessage as e:
+        return api_error(e.code, str(e), 400, **e.params)
     job = new_job(f.filename, params, ext)
     f.save(input_video(job["id"]))
     enqueue(job)
@@ -1139,14 +1227,16 @@ def api_rerun(job_id):
         is_scene = len(members) > 1
         src = copy.deepcopy(_scene_status_locked(src, members) if is_scene else src)
     if src["status"] in ACTIVE_STATUSES:
-        return jsonify({"error": "job is still running"}), 409
+        return api_error("job_active", "任务仍在运行。", 409)
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return api_error("param_invalid", "生成参数无效。", 400)
     if is_scene:
         body = {**body, "manual_select": True, "reselect_person": True}
     try:
         params = parse_params(body, base=src["params"])
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    except UserMessage as e:
+        return api_error(e.code, str(e), 400, **e.params)
     job = new_job(src["filename"], params, src["ext"])
     _link_video(input_video(job_id), input_video(job["id"]))
     old_thumbnail = os.path.join(job_dir(job_id), "thumbnail.jpg")
@@ -1204,7 +1294,7 @@ def api_cancel_job(job_id):
             members = [job]
         active = [j for j in members if j["status"] in ("queued", "running", "waiting_user")]
         if not active and job.get("scene_state") not in ("queued", "running"):
-            return jsonify({"error": "run is no longer active"}), 409
+            return api_error("job_inactive", "任务已经结束。", 409)
         if len(members) > 1:
             job["scene_state"] = "cancel_requested" if job.get("scene_state") == "running" else "cancelled"
             _persist_job_locked(job)
@@ -1224,7 +1314,7 @@ def api_select(job_id):
     """Resume with {"people": [candidate indices]}; older clients may send one person."""
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
-        return jsonify(error="请提交所选人物。"), 400
+        return api_error("people_required", "请提交所选人物。", 400)
     people = body.get("people", [body.get("person")])
     with JOBS_LOCK:
         job = JOBS.get(job_id)
@@ -1232,10 +1322,10 @@ def api_select(job_id):
             abort(404)
         slot = SELECTIONS.get(job_id)
         if slot is None or slot["event"].is_set() or job["status"] != "waiting_user":
-            return jsonify(error="此任务已不在等待选人。"), 409
+            return api_error("person_choice_closed", "此任务已不在等待选人。", 409)
         n = len(job["candidates"] or [])
         if not isinstance(people, list) or not people or any(type(i) is not int or not 0 <= i < n for i in people):
-            return jsonify(error="请至少勾选一个已检测到的人物。"), 400
+            return api_error("people_required", "请至少勾选一个已检测到的人物。", 400)
         people = list(dict.fromkeys(people))
         slot["people"] = people
         slot["event"].set()
@@ -1243,14 +1333,15 @@ def api_select(job_id):
 
 
 @app.route("/api/jobs/<job_id>/scene", methods=["POST"])
+@requires_runtime
 def api_prepare_scene(job_id):
     with JOBS_LOCK:
         members = _batch_members_locked(job_id)
         if len(members) < 2:
-            return jsonify(error="此任务没有多人场景。"), 404
+            return api_error("scene_missing", "此任务没有多人场景。", 404)
         parent = members[0]
         if not _scene_status_locked(parent, members).get("scene_needs_build"):
-            return jsonify(error="场景已存在或正在处理。"), 409
+            return api_error("scene_active", "场景已存在或正在处理。", 409)
         parent.update(scene_state="queued", scene_message="等待对齐多人站位…", scene_error=None)
         _persist_job_locked(parent)
         JOB_QUEUE.put(("scene", job_id))
@@ -1294,8 +1385,37 @@ def api_job(job_id):
     return jsonify(job)
 
 
+def history_key(row):
+    return float(row["created"]), row["id"]
+
+
+def encode_history_cursor(key):
+    return base64.urlsafe_b64encode(json.dumps(key, separators=(",", ":")).encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def decode_history_cursor(token):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", token):
+        raise ValueError("Invalid history cursor")
+    payload = base64.b64decode(token + "=" * (-len(token) % 4), altchars=b"-_", validate=True)
+    created, job_id = json.loads(payload)
+    if (type(created) not in (int, float) or not math.isfinite(created)
+            or not isinstance(job_id, str) or not 0 < len(job_id) <= 64):
+        raise ValueError("Invalid history cursor")
+    return created, job_id
+
+
 @app.route("/api/jobs")
 def api_jobs():
+    try:
+        limit = int(request.args.get("limit", "20"))
+        before_token, through_token = request.args.get("before"), request.args.get("through")
+        if not 1 <= limit <= 100 or (before_token is not None and through_token is not None):
+            raise ValueError("Invalid page")
+        before = decode_history_cursor(before_token) if before_token is not None else None
+        through = decode_history_cursor(through_token) if through_token is not None else None
+    except (ValueError, TypeError, binascii.Error, OverflowError):
+        return api_error("history_invalid_page", "历史记录分页无效，请刷新后重试。", 400)
+
     keys = ("id", "filename", "status", "progress", "created", "finished", "num_frames", "params", "recovered",
             "selected_person", "person_count", "person_done")
     with JOBS_LOCK:
@@ -1305,13 +1425,27 @@ def api_jobs():
                 groups[row["person_batch"]].append(row)
         grouped = {mid for batch, members in groups.items() if batch in JOBS and len(members) > 1
                    for mid in (row["id"] for row in members if row["id"] != batch)}
-        ordered = sorted(JOBS.values(), key=lambda j: j["created"], reverse=True)
+        ordered = sorted(JOBS.values(), key=history_key, reverse=True)
         ordered = [_scene_status_locked(j, groups[j["id"]]) if len(groups.get(j["id"], ())) > 1 else j
                    for j in ordered if j["id"] not in grouped]
-        jobs = [j for i, j in enumerate(ordered) if i < 20 or j["status"] in ACTIVE_STATUSES]
+        eligible = [row for row in ordered if before is None or history_key(row) < before]
+        page = eligible[:limit]
+        boundary = history_key(page[-1]) if page else None
+        if through is not None and (boundary is None or through < boundary):
+            boundary = through
+            page = [row for row in eligible if history_key(row) >= through]
+        jobs = page
+        if before is None:
+            # Active jobs remain reachable even when newer runs fill the page.
+            # They don't advance the cursor past undisplayed completed jobs.
+            jobs = [row for row in eligible if (boundary is not None and history_key(row) >= boundary)
+                    or row["status"] in ACTIVE_STATUSES]
+        cursor = encode_history_cursor(boundary) if boundary is not None else None
         deletable_count = sum(j["status"] not in ACTIVE_STATUSES for j in ordered)
         return jsonify({"now": time.time(),
                         "jobs": [{k: copy.deepcopy(j.get(k)) for k in keys} for j in jobs],
+                        "total": len(ordered), "cursor": cursor,
+                        "next_cursor": cursor if len(eligible) > len(page) else None,
                         "deletable_count": deletable_count})
 
 
@@ -1320,11 +1454,11 @@ def api_delete_jobs():
     """Delete selected jobs, or all finished jobs when no ids are supplied."""
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
-        return jsonify({"error": "request body must be a JSON object"}), 400
+        return api_error("history_invalid_delete", "无效的历史删除请求。", 400)
     requested = body.get("ids")
     if requested is not None and (not isinstance(requested, list) or
                                   any(not isinstance(job_id, str) for job_id in requested)):
-        return jsonify({"error": "ids must be a list of job IDs"}), 400
+        return api_error("history_invalid_delete", "无效的历史删除请求。", 400)
 
     deleted, skipped = [], []
     with JOBS_LOCK:
@@ -1453,17 +1587,17 @@ def api_fbx(job_id):
         abort(404)
     mode = request.args.get("mesh", "1")
     if mode not in ("0", "1"):
-        return jsonify(error="请选择仅骨架或包含蒙皮网格。"), 400
+        return api_error("fbx_mesh_mode", "请选择仅骨架或包含蒙皮网格。", 400)
     first_pose = request.args.get("first_pose", "none")
     if first_pose not in ("none", "t", "a"):
-        return jsonify(error="首帧参考姿势请选择不添加、T Pose 或 A Pose。"), 400
+        return api_error("fbx_reference_pose", "参考姿势请选择不添加、T Pose 或 A Pose。", 400)
     with_skin = mode == "1"
     suffix = "skin" if with_skin else "skeleton"
     body = request.args.get("body", "neutral") if with_skin else "neutral"
     try:
         variant = model_path(body) if body != "neutral" else None
     except ValueError as exc:
-        return jsonify(error=str(exc)), 400
+        return api_error("body_variant", str(exc), 400, variant=body)
     tag = f"_{body}_{file_stamp(model_path('neutral'))}_{file_stamp(variant)}" if variant else ""
     chosen, signature = None, ""
     if is_scene:
@@ -1471,7 +1605,7 @@ def api_fbx(job_id):
         numbers = {str(p["person"]) for p in available}
         requested = set(request.args.getlist("person")) or numbers
         if not requested <= numbers:
-            return jsonify(error="请选择此场景中的人物。"), 400
+            return api_error("scene_people", "请选择此场景中的人物。", 400)
         chosen = [p for p in available if str(p["person"]) in requested]
         signature = hashlib.sha256(",".join(sorted(requested)).encode()).hexdigest()[:12]
     # The final NPZ is authoritative. Re-export old jobs with the corrected

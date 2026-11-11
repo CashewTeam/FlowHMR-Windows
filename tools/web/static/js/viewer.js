@@ -3,9 +3,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { $, show, personColor } from "./utils.js";
+import { appError, message as m, setAttr, setText, t } from "./i18n.js";
 import * as api from "./api.js";
 
-const BODY_LABELS = { neutral: "中性", female: "女性", male: "男性" };
 const BODY_STORAGE = "flowhmr-body-variant";
 const MOUSE_MODE_STORAGE = "flowhmr-mouse-mode";
 
@@ -204,12 +204,12 @@ export function initViewer(preview) {
   resize();
 
   const views = {
-    front: [new THREE.Vector3(0, 0, 1), "前视正交"],
-    back: [new THREE.Vector3(0, 0, -1), "后视正交"],
-    right: [new THREE.Vector3(1, 0, 0), "右视正交"],
-    left: [new THREE.Vector3(-1, 0, 0), "左视正交"],
-    top: [new THREE.Vector3(0, 1, 0), "顶视正交"],
-    bottom: [new THREE.Vector3(0, -1, 0), "底视正交"],
+    front: new THREE.Vector3(0, 0, 1),
+    back: new THREE.Vector3(0, 0, -1),
+    right: new THREE.Vector3(1, 0, 0),
+    left: new THREE.Vector3(-1, 0, 0),
+    top: new THREE.Vector3(0, 1, 0),
+    bottom: new THREE.Vector3(0, -1, 0),
   };
   const gizmo = $("viewGizmo");
   const gizmoButtons = [...gizmo.querySelectorAll("[data-view]")];
@@ -218,7 +218,7 @@ export function initViewer(preview) {
   function updateGizmo() {
     inverseView.copy(camera.quaternion).invert();
     for (const button of gizmoButtons) {
-      projected.copy(views[button.dataset.view][0]).applyQuaternion(inverseView);
+      projected.copy(views[button.dataset.view]).applyQuaternion(inverseView);
       const x = 46 + projected.x * 28;
       const y = 46 - projected.y * 28;
       button.style.left = `${x}px`;
@@ -234,7 +234,7 @@ export function initViewer(preview) {
   }
   controls.addEventListener("change", () => { updateGizmo(); invalidate(); });
   controls.addEventListener("start", () => {
-    $("viewportName").textContent = camera === orthographic ? "用户正交" : "用户透视";
+    setText($("viewportName"), m(camera === orthographic ? "view.user_orthographic" : "view.user_perspective"));
   });
   controls.update();
   updateGizmo();
@@ -248,11 +248,11 @@ export function initViewer(preview) {
     updateOrthographic();
     controls.update();
     updateGizmo();
-    $("viewportName").textContent = camera === orthographic ? "用户正交" : "用户透视";
+    setText($("viewportName"), m(camera === orthographic ? "view.user_orthographic" : "view.user_perspective"));
     invalidate();
   }
   function setView(name) {
-    const [direction, label] = views[name];
+    const direction = views[name];
     setProjection(orthographic);
     const distance = camera.position.distanceTo(controls.target);
     camera.position.copy(controls.target).addScaledVector(direction, distance);
@@ -260,7 +260,7 @@ export function initViewer(preview) {
     updateOrthographic();
     updateGizmo();
     zoom.target = distance;
-    $("viewportName").textContent = label;
+    setText($("viewportName"), m("view.orthographic_direction", { direction: m(`view.${name}`) }));
   }
   function toggleProjection() {
     setProjection(camera === perspective ? orthographic : perspective);
@@ -276,7 +276,7 @@ export function initViewer(preview) {
     controls.mouseButtons.MIDDLE = pan ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
     controls.mouseButtons.RIGHT = pan ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
     for (const button of mouseTools) button.setAttribute("aria-pressed", String(button.dataset.mouseMode === mode));
-    $("viewControlHint").textContent = (pan ? "左键平移 · 中键/右键旋转" : "左键旋转 · 中键平移") + " · 滚轮缩放 · 空格播放";
+    setText($("viewControlHint"), m(pan ? "view.pan_status" : "view.rotate_status"));
   }
   for (const tool of mouseTools) {
     tool.onclick = () => {
@@ -300,7 +300,7 @@ export function initViewer(preview) {
       body.material.needsUpdate = true;
     }
     event.currentTarget.setAttribute("aria-pressed", String(bodyMat.wireframe));
-    $("viewportMode").textContent = bodyMat.wireframe ? "线框预览" : "实体预览";
+    setText($("viewportMode"), m(bodyMat.wireframe ? "view.wire_preview" : "view.solid"));
     renderer.shadowMap.needsUpdate = true;
     invalidate();
   };
@@ -327,15 +327,12 @@ export function initViewer(preview) {
       const height = estimatedGround?.height_m ?? 0;
       setGround(height);
       groundInput.value = height.toFixed(3);
-      $("groundSource").textContent = {
-        correction: "采用本次接触修正的地面。",
-        shared: "使用多人场景共用的地面。",
-        contacts: "从稳定支撑脚自动估计。",
-        soles: "根据较低的脚底位置估计。",
-      }[estimatedGround?.source] || "尚无自动地面，可手动调整。";
+      const source = ["correction", "shared", "contacts", "soles"].includes(estimatedGround?.source)
+        ? estimatedGround.source : "unavailable";
+      setText($("groundSource"), m(`view.ground_${source}`));
     } else {
-      $("groundSource").textContent = estimatedGround
-        ? `自动参考：${estimatedGround.height_m.toFixed(3)} m` : "手动设置显示高度。";
+      setText($("groundSource"), estimatedGround
+        ? m("view.ground_reference", { height: estimatedGround.height_m.toFixed(3) }) : m("view.ground_manual"));
     }
   }
   groundAuto.addEventListener("change", syncGround);
@@ -431,7 +428,7 @@ export function initViewer(preview) {
     coneToggle.disabled = !visible;
     shadowPlane.visible = floor.visible && !only;
     wireToggle.disabled = only;
-    $("viewportMode").textContent = only ? "仅骨架" : bodyMat.wireframe ? "线框预览" : "实体预览";
+    setText($("viewportMode"), m(only ? "view.skeleton_only" : bodyMat.wireframe ? "view.wire_preview" : "view.solid"));
     for (const actor of actors) {
       actor.body.visible = !only || !actor.skeleton;
       if (actor.skeleton) {
@@ -736,8 +733,10 @@ export function initViewer(preview) {
 
   // ---------------------------------------------------------------- public API
   function labelBody() {
-    const people = state.scene ? `${actors.length} 人 · ` : "";
-    $("viewportObject").textContent = `场景集合 | ${people}SMPL-H · ${BODY_LABELS[state.bodyVariant]}`;
+    setText($("viewportObject"), () => [
+      t("view.scene"),
+      [state.scene ? t("person.count", { count: actors.length }) : "", "SMPL-H", t(`view.${state.bodyVariant}`)].filter(Boolean).join(" · "),
+    ].join(" | "));
   }
 
   async function loadActor(person, variant, signal) {
@@ -747,7 +746,7 @@ export function initViewer(preview) {
     if (!meta.num_frames || vertices.byteLength !== meta.num_frames * meta.num_vertices * 6
         || faces.byteLength !== meta.num_faces * 12 || (person.start != null &&
           (sourceStart(meta) !== person.start || person.end - person.start + 1 !== meta.num_frames))) {
-      throw new Error("网格文件或人物时间范围不完整");
+      throw appError("view.mesh_incomplete");
     }
     return { person, meta, vertices, faces };
   }
@@ -797,12 +796,12 @@ export function initViewer(preview) {
     const change = bodyController = new AbortController();
     const jobId = state.jobId;
     bodySelect.disabled = true;
-    $("viewportObject").textContent = `正在准备${BODY_LABELS[selected]}体型…`;
+    setText($("viewportObject"), m("view.body_loading", { body: m(`view.${selected}`) }));
     try {
       const vertices = await Promise.all(actors.map((a) => api.getVertices(a.id, change.signal, selected)));
       if (change.signal.aborted || state.jobId !== jobId) return;
       if (vertices.some((data, i) => data.byteLength !== actors[i].meta.num_frames * actors[i].meta.num_vertices * 6)) {
-        throw new Error("体型数据不完整");
+        throw appError("view.body_incomplete");
       }
       vertices.forEach((data, i) => { actors[i].verts = new Uint16Array(data); });
       state.bodyVariant = selected;
@@ -813,7 +812,7 @@ export function initViewer(preview) {
     } catch (error) {
       if (change.signal.aborted || state.jobId !== jobId) return;
       bodySelect.value = state.bodyVariant;
-      $("viewportObject").textContent = `体型切换失败：${error.message}`;
+      setText($("viewportObject"), m("view.body_failed", { detail: error }));
     } finally {
       if (bodyController === change) { bodyController = null; bodySelect.disabled = false; }
     }
@@ -882,9 +881,14 @@ export function initViewer(preview) {
       if (groupScene) {
         estimatedGround = { height_m: groupScene.ground_m, source: "shared" };
         syncGround();
-      } else $("groundSource").textContent = "正在估计地面…";
-      $("resultInfo").textContent = `${groupScene ? `${actors.length} 人 · ` : ""}${meta.num_frames} 帧 · ${(meta.num_frames / meta.fps).toFixed(1)} 秒`;
-      $("resultInfo").title = `原素材第 ${(meta.track_start || 0) + 1}–${(meta.track_start || 0) + meta.num_frames} 帧`;
+      } else setText($("groundSource"), m("view.ground_pending"));
+      setText($("resultInfo"), () => [
+        groupScene ? t("person.count", { count: actors.length }) : "",
+        t("view.duration", { frames: meta.num_frames, seconds: (meta.num_frames / meta.fps).toFixed(1) }),
+      ].filter(Boolean).join(" · "));
+      setAttr($("resultInfo"), "title", m("timeline.source_span", {
+        start: (meta.track_start || 0) + 1, end: (meta.track_start || 0) + meta.num_frames,
+      }));
       labelBody();
       setFrame(0);
       resetView();
@@ -918,10 +922,11 @@ export function initViewer(preview) {
       show("dlFbx", false);
       $("menuNpz").disabled = $("menuFbx").disabled = true;
       setTimeline(0);
-      $("viewportObject").textContent = "场景集合";
-      $("resultInfo").textContent = "";
+      setText($("viewportObject"), m("view.scene"));
+      setText($("resultInfo"), "");
+      setAttr($("resultInfo"), "title", "");
     },
-    setStatus(text) { if (!state.meta) $("viewerEmpty").textContent = text; },
+    setStatus(text) { if (!state.meta) setText($("viewerEmpty"), text); },
     get jobId() { return state.jobId; },
   };
 }

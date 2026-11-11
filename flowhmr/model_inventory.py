@@ -3,7 +3,7 @@
 from . import model_files as files
 from . import model_integrity
 from . import model_sources as sources
-from .utils.runtime_hamer import hamer_model_status
+from .utils.runtime_hamer import hamer_model_details
 
 
 def _display_path(path):
@@ -12,10 +12,10 @@ def _display_path(path):
     return str(path)
 
 
-def _item(key, name, paths, folder, links, *, required=True, issue=None, archive=None):
+def _item(key, name, paths, folder, links, *, required=True, issue=None, issue_code=None, archive=None):
     verdicts = [(path, model_integrity.check(path)) for path in paths]
     missing = [_display_path(path) for path, verdict in verdicts if verdict.state == "missing"]
-    damaged = [{"file": _display_path(path), "detail": verdict.detail}
+    damaged = [{**model_integrity.issue(verdict), "file": _display_path(path)}
                for path, verdict in verdicts if verdict.state in ("incomplete", "corrupt")]
     if missing:
         status = "missing"
@@ -29,11 +29,11 @@ def _item(key, name, paths, folder, links, *, required=True, issue=None, archive
             "blocking": required and status != "ready", "folder": folder, "missing": missing,
             "damaged": damaged,
             "archive": {"entry": archive[0], "name": archive[1]} if archive else None,
-            "issue": issue, "links": [{"label": label, "url": url} for label, url in links]}
+            "issue": issue, "issue_code": issue_code, "links": [{"label": label, "url": url} for label, url in links]}
 
 
 def model_inventory(device, ckpt=None, config=None):
-    hamer_paths, issue = hamer_model_status(device)
+    hamer_paths, issue_code, issue = hamer_model_details(device)
     bundle = tuple(map(files.resolve_model, (files.SMPLH_FILES["female"], files.SMPLH_FILES["male"], *files.MANO_FILES)))
     mano_link = [("MANO 官网下载（需登录）", sources.MANO_URL)]
     return {"directory": str(files.MODEL_ROOT), "items": [
@@ -55,5 +55,5 @@ def model_inventory(device, ckpt=None, config=None):
         _item("hamer", "HaMeR", hamer_paths, "models/hamer",
               [("作者直链", sources.HAMER_ARCHIVE_URL), ("备用下载", sources.HAMER_DEMO_URL),
                ("官方说明", sources.HAMER_PROJECT_URL)],
-              required=False, issue=issue),
+              required=False, issue=issue, issue_code=issue_code),
     ]}

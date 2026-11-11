@@ -18,6 +18,8 @@ MANO_DOWNLOAD = ("Models & Code", f"{files.MANO_BUNDLE}.zip")
 HAMER_PROJECT_URL = "https://github.com/geopavlakos/hamer#demo"
 HAMER_DEMO_URL = "https://drive.google.com/uc?id=1mv7CUAnm73oKsEEG1xE3xH2C_oqcFSzT"
 HAMER_ARCHIVE_URL = "https://www.cs.utexas.edu/~pavlakos/hamer/data/hamer_demo_data.tar.gz"
+HAMER_MIRROR_REPO = "Leo-TX/hamer"
+HAMER_MIRROR_REVISION = "f64df318d49e7e014a6a7f5d0547cba87d6e4317"
 HAMER_REVISION = "3a01849f4148352e9260b69bf28b65d1671a4905"
 HAMER_SOURCE_URL = f"https://codeload.github.com/geopavlakos/hamer/zip/{HAMER_REVISION}"
 HAMER_SOURCE_SHA256 = "fba22b57f7a89a0af981ee064b06603a4c527bfd347331a0b369e5e4dcba5194"
@@ -80,3 +82,14 @@ HAMER_MEMBERS = {
     "_DATA/data/mano_mean_params.npz": Asset(
         files.HAMER_FILES[2], 1178, "efc0ec58e4a5cef78f3abfb4e8f91623b8950be9eff8b8e0dbb0d036ebc63988"),
 }
+
+
+def _hamer_direct_asset(asset):
+    # The mirror's three files were compared byte for byte with the author
+    # package. Always verify the pinned official digest before installing.
+    name = asset.relative.rsplit("/", 1)[-1]
+    suffix = f"/{HAMER_MIRROR_REPO}/resolve/{HAMER_MIRROR_REVISION}/{name}"
+    return Asset(asset.relative, asset.size, asset.sha256, (HF_MIRROR + suffix, HF_OFFICIAL + suffix))
+
+
+HAMER_DIRECT_ASSETS = tuple(_hamer_direct_asset(asset) for asset in HAMER_MEMBERS.values())

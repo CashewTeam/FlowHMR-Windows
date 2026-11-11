@@ -1,6 +1,7 @@
 // "Video preview" card: plays the local file before upload / the job video afterwards and
 // overlays person boxes on a canvas (all candidates while choosing, the tracked person after).
 import { $, show, personColor } from "./utils.js";
+import { message as m, setText } from "./i18n.js";
 
 export function initPreview(bus) {
   const video = $("previewVideo");
@@ -83,8 +84,7 @@ export function initPreview(bus) {
   video.addEventListener("error", () => {
     if (!baseSrc) return;
     if (baseSrc === localUrl || retries >= 10) {
-      showPreviewIssue(baseSrc === localUrl ? "此格式无法直接预览，生成时会转换为可播放视频。"
-        : "暂时无法载入预览，可在任务历史中重新打开。");
+      showPreviewIssue(m(baseSrc === localUrl ? "source.preview_convert" : "source.preview_retry"));
       return;
     }
     retries += 1;
@@ -102,7 +102,7 @@ export function initPreview(bus) {
   });
 
   function showPreviewIssue(message) {
-    $("previewIssue").textContent = message;
+    setText($("previewIssue"), message);
     show("previewIssue", !!message);
   }
 
@@ -118,7 +118,7 @@ export function initPreview(bus) {
     show("previewBox", false);
     syncControls();
     showPreviewIssue("");
-    $("previewTitle").textContent = "";
+    setText($("previewTitle"), "");
     refreshOverlay();
   }
 
@@ -300,10 +300,10 @@ export function initPreview(bus) {
   });
 
   return {
-    showLocal(file) { tracks = []; setSource(URL.createObjectURL(file), { local: true }); $("previewTitle").textContent = file.name; },
+    showLocal(file) { tracks = []; setSource(URL.createObjectURL(file), { local: true }); setText($("previewTitle"), file.name); },
     showJob(url, name, { refresh = false } = {}) {
       if (baseSrc !== url || refresh) setSource(url);
-      $("previewTitle").textContent = name;
+      setText($("previewTitle"), name);
     },
     setTrack(t) { tracks = t ? [t] : []; refreshOverlay(); },
     setTracks(items) { tracks = items; refreshOverlay(); },

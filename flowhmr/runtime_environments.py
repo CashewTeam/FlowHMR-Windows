@@ -18,7 +18,8 @@ from urllib.parse import quote
 from uuid import uuid4
 from zipfile import ZipFile
 
-from .model_downloads import ACTIVE_DOWNLOAD, DownloadCancelled, DownloadError, _failure_message, download_file
+from .model_downloads import ACTIVE_DOWNLOAD, DownloadCancelled, DownloadError, describe_download_error, download_file
+from . import runtime_rocm as rocm
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,11 +83,11 @@ def _read_json(path):
         return {}
 
 
-def _system_cuda():
+def _system_runtime():
     try:
         torch = version("torch")
         version("torchvision")
-        match = re.search(r"\+(cu\d+)", torch)
+        match = re.search(r"\+(cu\d+|rocm\d+(?:\.\d+)*)", torch)
         return match[1] if match else None
     except PackageNotFoundError:
         return None
@@ -95,6 +96,18 @@ def _system_cuda():
 def cuda_label(variant):
     digits = variant.removeprefix("cu")
     return f"CUDA {digits[:-1]}.{digits[-1]}"
+
+
+def runtime_label(variant):
+    if variant == rocm.PROFILE:
+        return f"ROCm {rocm.VERSION} · {rocm.ARCH}"
+    if variant.startswith("rocm"):
+        return "ROCm " + variant.removeprefix("rocm")
+    return cuda_label(variant)
+
+
+def runtime_packages(name):
+    return rocm.PACKAGES if name == rocm.PROFILE else WHEELS.get(name, ())
 
 
 @lru_cache(maxsize=1)
@@ -124,7 +137,7 @@ def _wheel_members(archive, wheel):
     for info in archive.infolist():
         path = PurePosixPath(info.filename)
         if path.is_absolute() or ".." in path.parts or "\\" in info.filename or ":" in info.filename:
-            raise DownloadError("运行环境包中有无效路径。")
+            raise DownloadError("运行环境包中有无效路径。", "transfer_unsafe_path")
         if info.is_dir() or not path.parts or path.parts[0] not in allow:
             continue
         if path.parts[:2] in {("torch", "include"), ("torch", "share")} or path.suffix.lower() == ".lib":
@@ -138,7 +151,7 @@ class RuntimeEnvironments:
         self.directory = self.root / "runtime/environments"
         self.downloads = self.root / ".cache/runtime-downloads"
         self.preference = self.directory / "selected.json"
-        self.system = _system_cuda() if SUPPORTED else None
+        self.system = _system_runtime() if SUPPORTED else None
         self.active = "system" if self.system else None
         self.logger = logger
         self.lock = Lock()
@@ -146,14 +159,16 @@ class RuntimeEnvironments:
         self.transfer = {"id": None, "status": "idle"}
 
     def installed(self, name):
-        if name not in WHEELS:
+        packages = runtime_packages(name)
+        if not packages:
             return None
         slot = self.directory / name
         site = slot / "site-packages"
         mark = _read_json(slot / "installed.json")
-        if (mark.get("sha256") == [item.sha256 for item in WHEELS[name]]
+        torch_library = "torch_hip.dll" if name == rocm.PROFILE else "torch_cuda.dll"
+        if (mark.get("sha256") == [item.sha256 for item in packages]
                 and site.resolve().is_relative_to(self.directory.resolve())
-                and (site / "torch/lib/torch_cuda.dll").is_file()
+                and (site / "torch/lib" / torch_library).is_file()
                 and (site / "torchvision/_C.pyd").is_file()):
             return site
         return None
@@ -168,6 +183,8 @@ class RuntimeEnvironments:
         if not SUPPORTED:
             return
         self.active = self.selected()
+        if self.active == rocm.PROFILE or (self.active == "system" and self.system.startswith("rocm")):
+            os.environ.setdefault("MIOPEN_FIND_MODE", "FAST")
         site = self.installed(self.active)
         if site is not None:
             sys.path.insert(0, str(site))
@@ -179,7 +196,7 @@ class RuntimeEnvironments:
         pending = SUPPORTED and selected != self.active
         return {"supported": SUPPORTED, "ready": not SUPPORTED or (self.active is not None and not pending),
                 "active": self.active, "selected": selected, "pending_restart": pending,
-                "label": cuda_label(self.system if self.active == "system" else self.active) if self.active else None}
+                "label": runtime_label(self.system if self.active == "system" else self.active) if self.active else None}
 
     def snapshot(self):
         with self.lock:
@@ -188,33 +205,49 @@ class RuntimeEnvironments:
     def details(self):
         data = self.summary()
         gpu = gpu_info()
+        amd = rocm.windows_adapter() if SUPPORTED else None
         options = []
         if self.system:
-            options.append({"id": "system", "label": cuda_label(self.system), "detail": "现有项目环境",
+            options.append({"id": "system", "label": runtime_label(self.system), "detail": "现有项目环境",
+                            "detail_code": "runtime_existing",
                             "installed": True, "bytes": 0, "compatible": True})
         if SUPPORTED:
             for name in VERSIONS:
-                unavailable = name == "cu126" and gpu and (gpu["name"].find("RTX 50") >= 0 or
-                              gpu["capability"].split(".", 1)[0].isdigit() and int(gpu["capability"].split(".", 1)[0]) >= 12)
+                newer_cuda = name == "cu126" and gpu and (gpu["name"].find("RTX 50") >= 0 or
+                             gpu["capability"].split(".", 1)[0].isdigit() and int(gpu["capability"].split(".", 1)[0]) >= 12)
+                amd_only = amd is not None and gpu is None
                 options.append({"id": name, "label": cuda_label(name), "installed": self.installed(name) is not None,
-                                "bytes": sum(wheel.size for wheel in WHEELS[name]), "compatible": not bool(unavailable),
-                                "detail": "RTX 50 系列请选 CUDA 12.8 或 12.9" if unavailable else
+                                "bytes": sum(wheel.size for wheel in WHEELS[name]), "compatible": not (newer_cuda or amd_only),
+                                "detail": "此运行环境需要 NVIDIA 显卡。" if amd_only else
+                                          "RTX 50 系列请选 CUDA 12.8 或 12.9" if newer_cuda else
                                           f"PyTorch {TORCH_VERSION} · 建议驱动 {DRIVER_RECOMMENDED[name]} 或更新",
+                                "detail_code": "runtime_cuda_required" if amd_only else
+                                               "runtime_gpu_unsupported" if newer_cuda else "runtime_driver",
+                                "detail_params": {"version": TORCH_VERSION, "driver": DRIVER_RECOMMENDED[name]},
                                 "recommended": name == "cu128",
                                 "source": f"https://download.pytorch.org/whl/{name}/torch/"})
-        return {**data, "gpu": gpu, "options": options, "directory": str(self.directory), "download": self.snapshot()}
+            options.append({"id": rocm.PROFILE, "label": runtime_label(rocm.PROFILE),
+                            "installed": self.installed(rocm.PROFILE) is not None, "compatible": amd is not None,
+                            "bytes": sum(asset.size for asset in rocm.PACKAGES),
+                            "detail": f"实验支持 · Windows 11 / gfx1201 · 建议 AMD 驱动 {rocm.DRIVER} 或更新。",
+                            "detail_code": "runtime_rocm_experimental", "detail_params": {"driver": rocm.DRIVER},
+                            "source": "https://rocm.docs.amd.com/en/docs-7.14.0/about/release-notes.html"})
+        return {**data, "gpu": gpu or amd, "options": options, "directory": str(self.directory), "download": self.snapshot()}
 
     def select(self, name):
         if not SUPPORTED or not (name == "system" and self.system or self.installed(name) is not None):
-            raise DownloadError("请先下载并安装此运行环境。")
+            raise DownloadError("请先下载并安装此运行环境。", "runtime_not_installed")
         _atomic_json(self.preference, {"version": name})
         return self.summary()
 
     def start(self, name):
-        if not SUPPORTED or name not in WHEELS:
-            raise DownloadError("此系统不支持所选运行环境。")
-        if not next(option for option in self.details()["options"] if option["id"] == name)["compatible"]:
-            raise DownloadError("此显卡请使用 CUDA 12.8 或 12.9。")
+        if not SUPPORTED or not runtime_packages(name):
+            raise DownloadError("此系统不支持所选运行环境。", "runtime_unsupported")
+        option = next(option for option in self.details()["options"] if option["id"] == name)
+        if not option["compatible"]:
+            if name == rocm.PROFILE:
+                raise DownloadError("此 ROCm 配置需要 Windows 11 和 gfx1201 显卡。", "runtime_rocm_gpu_required")
+            raise DownloadError(option["detail"], option["detail_code"])
         with self.lock:
             if self.transfer["status"] in ACTIVE_DOWNLOAD or self.installed(name) is not None:
                 return dict(self.transfer)
@@ -248,27 +281,32 @@ class RuntimeEnvironments:
         except Exception as error:
             if self.logger:
                 self.logger.exception("Failed to install Windows GPU runtime %s", name)
-            state = {"status": "failed", "error": _failure_message(error, "运行环境")}
+            failure = describe_download_error(error, "运行环境")
+            state = {"status": "failed", "error": str(failure), "error_code": failure.code,
+                     "error_params": failure.params}
         with self.lock:
             self.transfer.update(state)
 
     def install(self, name, progress, check):
         folder = self.downloads / name
         if any(not path.resolve().is_relative_to(self.root) for path in (folder, self.directory)):
-            raise DownloadError("运行环境目录必须位于 FlowHMR 文件夹内。")
+            raise DownloadError("运行环境目录必须位于 FlowHMR 文件夹内。", "transfer_unsafe_path")
         self.directory.mkdir(parents=True, exist_ok=True)
         folder.mkdir(parents=True, exist_ok=True)
         wheels = [(wheel, download_file(wheel, folder / wheel.relative, folder, progress, check,
-                                       subject="运行环境", verify_existing=True)) for wheel in WHEELS[name]]
-        with TemporaryDirectory(prefix=f".{name}-", dir=self.directory) as temporary:
+                                       subject="运行环境", verify_existing=True)) for wheel in runtime_packages(name)]
+        with TemporaryDirectory(prefix=".install-", dir=self.directory) as temporary:
             stage = Path(temporary)
             site = stage / "site-packages"
             for wheel, package in wheels:
+                if name == rocm.PROFILE:
+                    rocm.install_package(package, site, progress, check)
+                    continue
                 with ZipFile(package) as archive:
                     members = list(_wheel_members(archive, wheel))
                     total = sum(info.file_size for info, _ in members)
                     if shutil.disk_usage(stage).free < total + 64 * 1024 ** 2:
-                        raise DownloadError("磁盘空间不足，无法解包运行环境。")
+                        raise DownloadError("磁盘空间不足，无法解包运行环境。", "transfer_disk")
                     written = 0
                     progress("install", wheel.package, 0, total)
                     for info, relative in members:
@@ -283,19 +321,20 @@ class RuntimeEnvironments:
                                 progress("install", wheel.package, written, total)
             check()
             progress("test", "GPU", 0, 0)
-            probe = self.root / "tools/windows/probe_cuda.py"
-            result = subprocess.run([sys.executable, "-I", "-B", str(probe), str(site), name], cwd=self.root,
-                                    capture_output=True, encoding="utf-8", errors="replace", timeout=75,
+            probe = self.root / "tools/windows" / ("probe_rocm.py" if name == rocm.PROFILE else "probe_cuda.py")
+            probe_args = [sys.executable, "-I", "-B", str(probe), str(site), name]
+            result = subprocess.run(probe_args, cwd=self.root,
+                                    capture_output=True, encoding="utf-8", errors="replace", timeout=100,
                                     creationflags=subprocess.CREATE_NO_WINDOW)
             if result.returncode:
                 if self.logger:
                     self.logger.warning("GPU probe %s: %s", name, (result.stderr or result.stdout)[-4000:])
-                raise DownloadError("GPU 验证失败。请检查显卡驱动或选择其他 CUDA 版本。下载文件已保留。")
+                raise DownloadError("GPU 验证失败。请检查显卡驱动及运行环境。下载文件已保留。", "runtime_probe_failed")
             check()
             _atomic_json(stage / "installed.json", {"sha256": [wheel.sha256 for wheel, _ in wheels]})
             destination = self.directory / name
             if destination.exists():
-                raise DownloadError("目标版本目录已存在且未通过检查，请移走该目录后重试。")
+                raise DownloadError("目标版本目录已存在且未通过检查，请移走该目录后重试。", "runtime_directory_conflict")
             stage.rename(destination)
         for _, package in wheels:
             try:

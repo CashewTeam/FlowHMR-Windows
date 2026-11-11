@@ -19,18 +19,52 @@ from flowhmr.model_files import HAMER_FILES, MANO_FILES, file_present, resolve_m
 MISSING_HAMER = "HaMeR 手指精修缺少运行环境或模型，请在右上角「模型」查看。"
 PROGRESS_PREFIX = "@@HAMER@@"
 HAMER_STRIDES = (1, 2, 3, 4)
+HAMER_ISSUES = {
+    "hamer_gpu_required": "手指精修需要 GPU 推理环境。",
+    "hamer_runtime_missing": "请先在「运行环境」中下载并启用 GPU 推理环境。",
+    "hamer_code_missing": "缺少 HaMeR 推理组件。请在「模型」中下载。",
+    "hamer_mano_missing": "缺少 MANO v1.2。请从 MANO 官网下载「Models & Code（mano_v1_2.zip）」并导入。",
+    "hamer_mano_invalid": "MANO_RIGHT.pkl 不完整或不是原版 MANO v1.2。请用 MANO 官网「Models & Code（mano_v1_2.zip）」中的原文件替换。",
+}
+
+
+def _mano_v12_issue(path):
+    """Check the official hand file's container without unpickling it on UI polls."""
+    try:
+        if not path.is_file():
+            return "hamer_mano_missing"
+        with path.open("rb") as stream:
+            # Reject truncated downloads, renamed ZIPs and the much larger SMPL-H
+            # body files. The worker checks the actual MANO array shapes.
+            if not (1 << 20) <= os.fstat(stream.fileno()).st_size <= (16 << 20):
+                return "hamer_mano_invalid"
+            prefix = stream.read(64)
+            stream.seek(-1, os.SEEK_END)
+            if not prefix.startswith(b"\x80\x02}") or b"numpy" not in prefix or stream.read(1) != b".":
+                return "hamer_mano_invalid"
+    except FileNotFoundError:
+        return "hamer_mano_missing"
+    except OSError:
+        return "hamer_mano_invalid"
+    return None
+
+
+def hamer_model_details(device):
+    paths = tuple(map(resolve_model, HAMER_FILES))
+    if str(device).split(":", 1)[0] != "cuda":
+        issue = "hamer_gpu_required"
+    elif find_spec("torch") is None:
+        issue = "hamer_runtime_missing"
+    elif not runtime_installed() or any(find_spec(name) is None for name in ("timm", "einops", "yacs", "scipy", "cv2")):
+        issue = "hamer_code_missing"
+    else:
+        issue = _mano_v12_issue(resolve_model(MANO_FILES[1]))
+    return paths, issue, HAMER_ISSUES.get(issue)
 
 
 def hamer_model_status(device):
-    paths = tuple(map(resolve_model, HAMER_FILES))
-    if str(device).split(":", 1)[0] != "cuda":
-        return paths, "手指精修需要 NVIDIA GPU。"
-    if not runtime_installed() or any(
-            find_spec(name) is None for name in ("torch", "timm", "einops", "yacs", "scipy", "cv2")):
-        return paths, "缺少 HaMeR 独立运行组件。按模型目录的放置说明安装。"
-    if not file_present(resolve_model(MANO_FILES[1])):
-        return paths, "请放入完整的 MANO 官方模型包。"
-    return paths, None
+    paths, _, message = hamer_model_details(device)
+    return paths, message
 
 
 def hamer_available(device):

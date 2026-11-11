@@ -1,48 +1,62 @@
 import { $, el, formatBytes, show } from "./utils.js";
-import { getModelDownload, startModelDownload, stopModelDownload, verifyModels } from "./api.js";
+import { getModelDownload, getModelImport, startModelDownload, startModelImport, stopModelDownload, verifyModels } from "./api.js";
+import { localize, message as m, serverMessage, setAttr, setText, t } from "./i18n.js";
 
-const LABELS = { ready: "已就绪", missing: "缺文件", damaged: "文件损坏", unavailable: "未就绪" };
-const PHASES = { download: "下载", verify: "校验", install: "安装" };
 const active = (state) => state?.status === "running" || state?.status === "stopping";
-const sizeLabel = (n) => n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GB` : formatBytes(n);
+const sizeLabel = (n) => n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GiB` : n < 1024 ? `${n} B` : formatBytes(n);
+const LINK_KEYS = new Map([
+  ["MANO 官网下载（需登录）", "mano"], ["镜像入口", "mirror"], ["官方仓库", "official"],
+  ["官方权重", "weights"], ["魔搭下载", "modelscope"], ["直接下载", "direct"],
+  ["作者直链", "author"], ["备用下载", "backup"], ["官方说明", "docs"],
+]);
 
 export function initModelDialog(refreshInventory) {
   const dialog = $("modelDialog"), list = $("modelList");
   const directory = $("modelDirectory"), folderButton = $("modelOpenFolder");
-  const refreshButton = $("modelRefresh"), status = $("modelCheckStatus");
-  const verifyButton = $("modelVerify");
+  const refreshButton = $("modelRefresh"), status = $("modelCheckStatus"), verifyButton = $("modelVerify");
   const downloadButton = $("modelDownload"), stopButton = $("modelDownloadStop");
+  const importButton = $("modelImportFolder"), importBox = $("modelImport"), importLabel = $("modelImportLabel");
+  const importBar = $("modelImportBar"), importResults = $("modelImportResults");
   const transferBox = $("modelTransfer"), transferLabel = $("modelTransferLabel");
   const transferBar = $("modelTransferBar"), transferErrors = $("modelTransferErrors");
-  let inventory = null, transfer = null, busy = false, pollTimer = null, version = 0;
+  let inventory = null, transfer = null, imported = null, busy = false, pollTimer = null, version = 0;
+  let hamerButton = null;
+  const importing = () => imported?.state === "running";
+  const working = () => active(transfer) || importing();
+  const groupName = (id, fallback) => m(`model_name.${id}`, {}, fallback ?? id);
+  const group = (id) => groupName(id, inventory?.items.find((item) => item.id === id)?.name);
 
-  function render(next) {
+  function renderInventory(next) {
     inventory = next;
+    transfer = next.download ?? null;
+    imported = next.import ?? null;
     directory.value = inventory.directory;
     folderButton.disabled = false;
+    hamerButton = null;
     list.replaceChildren(...inventory.items.map((item) => {
       const row = el("div", "model-item");
       row.dataset.model = item.id;
       const heading = el("div", "model-row");
-      const badge = el("span", "model-badge", LABELS[item.status]);
+      const badge = el("span", "model-badge", m(`models.${item.status}`, {}, item.status));
       badge.dataset.state = item.status;
       const name = el("span", "model-name");
-      name.append(el("strong", "", item.name), el("span", "model-role", item.required ? "必需" : "可选"));
+      name.append(el("strong", "", groupName(item.id, item.name)),
+        el("span", "model-role", m(item.required ? "models.required" : "models.optional")));
       heading.append(name, badge);
       row.append(heading);
       if (item.status !== "ready") {
         if (item.archive) {
           const source = el("div", "model-install model-archive");
-          source.append(el("span", "", "官网下载项"), el("strong", "", item.archive.entry),
+          source.append(el("span", "", m("models.archive")), el("strong", "", item.archive.entry),
             el("code", "", item.archive.name));
           row.append(source);
         }
         const help = el("div", "model-install");
         if (item.status === "missing") {
-          help.append(el("span", "", item.archive ? "解压到" : "放入"), el("code", "", item.folder));
+          help.append(el("span", "", m(item.archive ? "models.extract_to" : "models.place_in")), el("code", "", item.folder));
         }
-        for (const { label, url } of item.links) {
-          const link = el("a", "", label);
+        for (const { label, label_code, url } of item.links) {
+          const link = el("a", "", m(`model_link.${label_code ?? LINK_KEYS.get(label)}`, {}, label));
           link.href = url;
           link.target = "_blank";
           link.rel = "noopener noreferrer";
@@ -51,149 +65,225 @@ export function initModelDialog(refreshInventory) {
         row.append(help);
         if (item.missing?.length) {
           const missing = el("div", "model-install model-missing");
-          missing.append(el("span", "", "缺少"), ...item.missing.map((file) => el("code", "", file)));
+          missing.append(el("span", "", m("models.missing_label")), ...item.missing.map((file) => el("code", "", file)));
           row.append(missing);
         }
         if (item.damaged?.length) {
           const damaged = el("div", "model-install model-missing");
-          damaged.append(el("span", "", "文件异常"),
-            ...item.damaged.map((entry) => el("code", "", `${entry.file}：${entry.detail}`)));
+          damaged.append(el("span", "", m("models.damaged_label")),
+            ...item.damaged.map((entry) => el("code", "", m("models.file_result", {
+              file: entry.file,
+              detail: serverMessage(entry.detail_code, {
+                size: entry.size == null ? "?" : sizeLabel(entry.size),
+                expected: entry.expected == null ? "?" : sizeLabel(entry.expected),
+              }, entry.detail),
+            }))));
           row.append(damaged);
         }
-        if (item.issue) row.append(el("p", "model-issue", item.issue));
+        if (item.issue || item.issue_code) row.append(el("p", "model-issue", serverMessage(item.issue_code, item.issue_params, item.issue)));
+        if (item.id === "hamer" && inventory.hamer_download_bytes > 0) {
+          hamerButton = el("button", "btn-secondary small");
+          hamerButton.type = "button";
+          hamerButton.addEventListener("click", () => changeDownload(() => startModelDownload("hamer")));
+          const controls = el("div", "model-install");
+          controls.append(hamerButton);
+          row.append(controls);
+        }
       }
       return row;
     }));
     const blocking = inventory.items.filter((item) => item.blocking);
     const damaged = blocking.filter((item) => item.status === "damaged").length;
-    if (!blocking.length) status.textContent = "必需模型齐全";
-    else if (damaged) status.textContent = `${blocking.length} 组必需模型未就绪，其中 ${damaged} 组文件损坏`;
-    else status.textContent = `缺少 ${blocking.length} 组必需模型`;
+    setText(status, !blocking.length ? m("models.required_ready") : damaged
+      ? m("models.required_damaged", { count: blocking.length, damaged })
+      : m("models.required_count", { count: blocking.length }));
   }
 
-  const groupName = (group) => inventory?.items.find((item) => item.id === group)?.name ?? group;
+  function syncButtons() {
+    const running = active(transfer);
+    const native = !!window.pywebview?.api?.choose_model_folder;
+    show(importButton, native);
+    importButton.disabled = busy || working();
+    refreshButton.disabled = busy || working();
+    verifyButton.disabled = busy || working();
+    show(downloadButton, !running && !!inventory?.downloadable?.length);
+    downloadButton.disabled = busy || importing();
+    show(stopButton, running);
+    stopButton.disabled = busy || transfer?.status === "stopping";
+    const resumable = transfer?.status === "cancelled";
+    setText(downloadButton, m(resumable && transfer.group !== "hamer" ? "download.resume" : "models.download_missing"));
+    setAttr(downloadButton, "title", inventory?.download_bytes ? m("download.up_to", { bytes: sizeLabel(inventory.download_bytes) }) : "");
+    if (hamerButton) {
+      hamerButton.disabled = busy || working();
+      setText(hamerButton, m(resumable && transfer.group === "hamer" ? "download.resume" : "models.download_hamer",
+        { bytes: sizeLabel(inventory.hamer_download_bytes) }));
+    }
+  }
 
   function renderTransfer() {
     const running = active(transfer);
-    show(downloadButton, !running && !!inventory?.downloadable?.length);
-    show(stopButton, running);
-    downloadButton.disabled = busy;
-    stopButton.disabled = busy || transfer?.status === "stopping";
-    downloadButton.textContent = transfer?.status === "cancelled" ? "继续下载" : "下载缺失模型";
-    downloadButton.title = inventory?.download_bytes ? `最多下载 ${sizeLabel(inventory.download_bytes)}` : "";
-    show(transferBox, transfer && transfer.status !== "idle");
+    show(transferBox, !!transfer && transfer.status !== "idle");
     show(transferBar, running);
     const errors = transfer?.errors ?? [];
     show(transferErrors, errors.length > 0);
     transferErrors.replaceChildren(...errors.map((error) =>
-      el("li", "", `${groupName(error.group)}${error.file ? ` · ${error.file}` : ""}：${error.message}`)));
+      el("li", "", m("models.file_result", {
+        file: () => [error.group ? localize(group(error.group)) : "", error.file].filter(Boolean).join(" · "),
+        detail: serverMessage(error.error_code, error.error_params, error.message),
+      }))));
     if (running) {
-      const parts = [transfer.status === "stopping" ? "正在停止…" : PHASES[transfer.phase]];
-      if (transfer.group) parts.push(`${groupName(transfer.group)}（${transfer.index}/${transfer.count}）`);
-      if (transfer.file) parts.push(transfer.file);
-      if (transfer.total > 0) {
-        transferBar.max = transfer.total;
-        transferBar.value = transfer.bytes;
-        parts.push(`${sizeLabel(transfer.bytes)} / ${sizeLabel(transfer.total)}`);
+      const { group: groupId, file, bytes, total, index, count, phase } = transfer;
+      if (total > 0) {
+        transferBar.max = total;
+        transferBar.value = bytes;
       } else transferBar.removeAttribute("value");
-      transferLabel.textContent = parts.join(" · ");
-    } else {
-      transferLabel.textContent = transfer?.status === "cancelled" ? "下载已停止，下次可从断点继续。"
-        : errors.length ? "有模型未能安装，可重试下载或使用链接。" : "下载完成，文件已放入模型目录。";
+      setText(transferLabel, () => [
+        transfer.status === "stopping" ? t("job.stopping") : t(phase === "download" ? "download.fetching" : `download.${phase}`, {}, ""),
+        groupId ? `${localize(group(groupId))} (${index}/${count})` : "",
+        file, total > 0 ? `${sizeLabel(bytes)} / ${sizeLabel(total)}` : "",
+      ].filter(Boolean).join(" · "));
+    } else setText(transferLabel, m(transfer?.status === "cancelled" ? "download.cancelled"
+      : errors.length ? "models.download_failed" : "models.download_done"));
+  }
+
+  function renderImport() {
+    const running = importing();
+    show(importBox, !!imported && imported.state !== "idle");
+    show(importBar, running);
+    if (running && imported.bytes_total > 0) {
+      importBar.max = imported.bytes_total;
+      importBar.value = imported.bytes_done;
+    } else importBar.removeAttribute("value");
+    const results = imported?.results ?? [];
+    const visible = results.length > 0 && !running;
+    show(importResults, visible);
+    if (visible) {
+      importResults.replaceChildren(...results.map((entry) => {
+        const item = el("li", "", () => [
+          t("models.file_result", { file: entry.file, detail: m(`import_status.${entry.status}`, {}, entry.status) }),
+          entry.code ? t(`import_reason.${entry.code}`, {}, "") : "",
+        ].filter(Boolean).join(" · "));
+        item.dataset.status = entry.status;
+        return item;
+      }));
     }
+    if (running) {
+      setText(importLabel, imported.phase === "copy" ? m("models.import_copy", {
+        file: imported.current_file || "",
+        done: sizeLabel(imported.bytes_done),
+        total: sizeLabel(imported.bytes_total),
+      }) : m("models.import_scan"));
+    } else if (imported?.state === "completed") {
+      const installed = results.filter((row) => row.status === "installed").length;
+      const skipped = results.filter((row) => row.status === "skipped").length;
+      setText(importLabel, m("models.import_done", { installed, skipped, unresolved: results.length - installed - skipped }));
+    } else if (imported?.state === "failed") {
+      setText(importLabel, m("models.import_failed", { detail: serverMessage(imported.error_code, {}, "") }));
+    }
+  }
+
+  function renderWork() {
+    syncButtons();
+    renderTransfer();
+    renderImport();
   }
 
   function schedulePoll() {
     clearTimeout(pollTimer);
-    if (dialog.open && !busy && active(transfer)) pollTimer = setTimeout(pollDownload, 700);
+    if (dialog.open && !busy && working()) pollTimer = setTimeout(pollWork, 700);
   }
 
-  async function pollDownload() {
+  async function pollWork() {
     const token = version;
+    const pollingImport = importing();
     try {
-      const next = await getModelDownload();
+      const next = await (pollingImport ? getModelImport() : getModelDownload());
       if (token !== version || !dialog.open) return;
-      transfer = next;
-      renderTransfer();
-      if (!active(transfer)) { await refresh(); return; }
+      if (pollingImport) imported = next; else transfer = next;
+      renderWork();
+      if (!working()) { await refresh(); return; }
     } catch {
       if (token !== version || !dialog.open) return;
-      transferLabel.textContent = "正在重新连接下载服务…";
+      setText(pollingImport ? importLabel : transferLabel, m("connection.reconnecting"));
     }
+    schedulePoll();
+  }
+
+  function begin() {
+    busy = true;
+    version++;
+    clearTimeout(pollTimer);
+    syncButtons();
+  }
+  function end() {
+    busy = false;
+    renderWork();
     schedulePoll();
   }
 
   async function refresh() {
     if (busy) return;
-    busy = true;
-    version++;
-    clearTimeout(pollTimer);
-    refreshButton.disabled = true;
-    renderTransfer();
+    begin();
     list.setAttribute("aria-busy", "true");
-    status.textContent = "正在检查模型文件…";
-    try {
-      const next = await refreshInventory();
-      render(next);
-      transfer = next.download ?? null;
-    } catch (error) {
-      status.textContent = `检查失败：${error.message}`;
-    } finally {
-      busy = false;
-      refreshButton.disabled = false;
-      list.removeAttribute("aria-busy");
-      renderTransfer();
-      schedulePoll();
-    }
+    setText(status, m("models.checking"));
+    try { renderInventory(await refreshInventory()); }
+    catch (error) { setText(status, m("models.check_failed", { detail: error })); }
+    finally { list.removeAttribute("aria-busy"); end(); }
   }
 
   async function verifyHashes() {
-    if (busy) return;
-    busy = true;
-    version++;
-    clearTimeout(pollTimer);
-    refreshButton.disabled = true;
-    verifyButton.disabled = true;
-    status.textContent = "正在校验文件哈希，首次可能需要几分钟…";
-    let message;
+    if (busy || working()) return;
+    begin();
+    setText(status, m("models.hash_running"));
+    let result;
     try {
       const report = await verifyModels();
-      message = report.problems?.length
-        ? `哈希校验发现 ${report.problems.length} 个文件有问题`
-        : `哈希校验通过（${report.checked} 个文件）`;
+      result = report.problems?.length ? m("models.hash_issues", { count: report.problems.length })
+        : m("models.hash_ok", { count: report.checked });
     } catch (error) {
-      message = `校验失败：${error.message}`;
+      result = m("models.hash_failed", { detail: error });
+    } finally {
+      end();
     }
-    busy = false;
-    refreshButton.disabled = false;
-    verifyButton.disabled = false;
-    // 重新读一次清单，让徽章反映刚写进缓存的哈希结果。
-    await refresh();
-    status.textContent = message;
+    await refresh(); // Refresh badges after recording the hash verdicts.
+    setText(status, result);
   }
 
   async function changeDownload(action) {
     if (busy) return;
-    busy = true;
-    version++;
-    clearTimeout(pollTimer);
-    renderTransfer();
+    begin();
     let updated = false;
     try {
       transfer = await action();
       updated = true;
     } catch (error) {
-      status.textContent = error.message;
+      setText(status, error);
     } finally {
-      busy = false;
-      renderTransfer();
-      schedulePoll();
+      end();
     }
-    if (updated && !active(transfer)) void refresh();
+    if (updated && !working()) await refresh();
+  }
+
+  async function chooseFolder() {
+    const choose = window.pywebview?.api?.choose_model_folder;
+    if (!choose || busy || working()) return;
+    begin();
+    try {
+      const folder = await choose();
+      if (folder) imported = await startModelImport(folder);
+    } catch (error) {
+      setText(status, m("models.import_failed", { detail: error }));
+    } finally {
+      end();
+    }
   }
 
   function syncFolderButton() {
-    folderButton.textContent = window.pywebview?.api?.open_models_folder ? "打开文件夹" : "复制路径";
+    setText(folderButton, m(window.pywebview?.api?.open_models_folder ? "common.open_folder" : "models.copy_path"));
+    const native = !!window.pywebview?.api?.choose_model_folder;
+    show("modelImportGuide", native);
+    show("modelManualGuide", !native);
+    syncButtons();
   }
   window.addEventListener("pywebviewready", syncFolderButton);
   $("btnModels").addEventListener("click", () => {
@@ -203,19 +293,24 @@ export function initModelDialog(refreshInventory) {
   });
   refreshButton.addEventListener("click", refresh);
   verifyButton.addEventListener("click", verifyHashes);
-  downloadButton.addEventListener("click", () => changeDownload(startModelDownload));
-  stopButton.addEventListener("click", () => changeDownload(() => stopModelDownload(transfer.id)));
+  downloadButton.addEventListener("click", () => {
+    if (!working()) void changeDownload(() => startModelDownload());
+  });
+  stopButton.addEventListener("click", () => {
+    if (active(transfer)) void changeDownload(() => stopModelDownload(transfer.id));
+  });
+  importButton.addEventListener("click", chooseFolder);
   dialog.addEventListener("close", () => { version++; clearTimeout(pollTimer); });
   folderButton.addEventListener("click", async () => {
     try {
       if (window.pywebview?.api?.open_models_folder) await window.pywebview.api.open_models_folder();
       else {
         await navigator.clipboard.writeText(directory.value);
-        status.textContent = "已复制模型文件夹路径。";
+        setText(status, m("models.path_copied"));
       }
     } catch {
       directory.select();
-      status.textContent = "可按 Ctrl+C 复制模型文件夹路径。";
+      setText(status, m("models.copy_keys"));
     }
   });
 }

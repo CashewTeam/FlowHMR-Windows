@@ -1,7 +1,7 @@
 import { $, el, show } from "./utils.js";
 import { getRuntime, selectRuntime, startRuntimeDownload, stopRuntimeDownload } from "./api.js";
+import { appError, localize, message as m, serverMessage, setText, t } from "./i18n.js";
 
-const PHASES = { download: "正在下载", verify: "正在校验", install: "正在解包", test: "正在验证 GPU" };
 const GB = (value) => `${(value / 1e9).toFixed(2)} GB`;
 const active = (transfer) => ["running", "stopping"].includes(transfer?.status);
 const REOPEN = "flowhmr-runtime-reopen";
@@ -16,7 +16,7 @@ export function initRuntimeDialog() {
   function summarize(next) {
     show(button, !!next?.supported);
     button.classList.toggle("needs-models", next?.supported && !next.ready);
-    $("runtimeInfo").textContent = next?.pending_restart ? "待切换" : next?.label ?? "未启用";
+    setText($("runtimeInfo"), next?.pending_restart ? m("runtime.pending") : next?.label ?? m("runtime.disabled"));
   }
 
   function render() {
@@ -26,8 +26,8 @@ export function initRuntimeDialog() {
     summarize(state);
     directory.value = state.directory;
     folder.disabled = !state.directory;
-    $("runtimeGpu").textContent = state.gpu ? `${state.gpu.name} · 驱动 ${state.gpu.driver}`
-      : "未读取到 NVIDIA 显卡信息。启用前会实际验证 GPU。";
+    setText($("runtimeGpu"), state.gpu ? m("runtime.gpu_driver", { name: state.gpu.name, driver: state.gpu.driver })
+      : m("runtime.gpu_unknown"));
     list.replaceChildren(...state.options.map((option) => {
       const item = el("div", "model-item runtime-option");
       item.dataset.version = option.id;
@@ -35,21 +35,24 @@ export function initRuntimeDialog() {
       const title = el("div", "runtime-option-title");
       const isActive = option.id === state.active;
       const pending = state.pending_restart && option.id === state.selected;
-      const label = isActive ? "使用中" : pending ? "待切换" : option.installed ? "已安装" : "未安装";
+      const label = m(isActive ? "runtime.active" : pending ? "runtime.pending" : option.installed ? "runtime.installed" : "runtime.not_installed");
       const badge = el("span", "model-badge", label);
       badge.dataset.state = option.installed ? "ready" : "missing";
       title.append(el("strong", "", option.label), badge);
-      if (option.recommended) title.append(el("span", "runtime-recommended", "推荐"));
-      info.append(title, el("p", "model-issue", option.detail + (option.bytes ? ` · 下载 ${GB(option.bytes)}` : "")));
+      if (option.recommended) title.append(el("span", "runtime-recommended", m("common.recommended")));
+      info.append(title, el("p", "model-issue", () => [
+        localize(serverMessage(option.detail_code, option.detail_params, option.detail)),
+        option.bytes ? t("runtime.download_size", { bytes: GB(option.bytes) }) : "",
+      ].filter(Boolean).join(" · ")));
       if (option.source && !option.installed) {
-        const link = el("a", "runtime-source", "PyTorch 官方");
+        const link = el("a", "runtime-source", m(option.detail_code === "runtime_rocm_experimental" ? "runtime.amd_source" : "runtime.source"));
         link.href = option.source;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         info.append(link);
       }
       const action = el("button", option.recommended && !option.installed ? "btn-primary small" : "btn-secondary small",
-        option.installed ? "启用" : transfer?.version === option.id && transfer.status === "cancelled" ? "继续下载" : "下载");
+        m(option.installed ? "runtime.enable" : transfer?.version === option.id && transfer.status === "cancelled" ? "download.resume" : "download.download"));
       action.type = "button";
       action.disabled = busy || running || isActive || pending || !option.compatible || (!option.installed && state.pending_restart);
       action.addEventListener("click", () => transact(async () => {
@@ -63,7 +66,7 @@ export function initRuntimeDialog() {
     }));
     show(stop, running);
     stop.disabled = busy || transfer?.status === "stopping";
-    show(restart, state.pending_restart && !!window.pywebview?.api?.restart_runtime);
+    show(restart, !!state.pending_restart && !!window.pywebview?.api?.restart_runtime);
     restart.disabled = busy;
     refresh.disabled = busy;
     show(transferBox, !!transfer && transfer.status !== "idle");
@@ -73,14 +76,14 @@ export function initRuntimeDialog() {
       transferBar.value = transfer.bytes;
     } else transferBar.removeAttribute("value");
     const target = state.options.find((option) => option.id === transfer?.version)?.label ?? "";
-    $("runtimeTransferLabel").textContent = running
-      ? [transfer.status === "stopping" ? "正在停止…" : PHASES[transfer.phase], target,
-          transfer.total > 0 ? `${GB(transfer.bytes)} / ${GB(transfer.total)}` : ""].filter(Boolean).join(" · ")
-      : transfer?.status === "failed" ? transfer.error
-        : transfer?.status === "cancelled" ? "已停止，下次可继续下载。"
-          : transfer?.status === "done" ? `${target} 已通过验证，点击「启用」使用。` : "";
-    status.textContent = state.pending_restart ? "重启推理服务后生效。"
-      : state.ready ? `${state.label} 使用中` : "请选择一个运行环境。";
+    setText($("runtimeTransferLabel"), running
+      ? () => [transfer.status === "stopping" ? t("job.stopping") : t(transfer.phase === "download" ? "download.fetching" : `download.${transfer.phase}`, {}, ""),
+        target, transfer.total > 0 ? `${GB(transfer.bytes)} / ${GB(transfer.total)}` : ""].filter(Boolean).join(" · ")
+      : transfer?.status === "failed" ? serverMessage(transfer.error_code, transfer.error_params, transfer.error)
+        : transfer?.status === "cancelled" ? m("download.cancelled")
+          : transfer?.status === "done" ? m("runtime.download_done", { target }) : "");
+    setText(status, state.pending_restart ? m("runtime.restart_pending")
+      : state.ready ? m("runtime.using", { label: state.label }) : m("runtime.choose"));
   }
 
   async function applySwitch() {
@@ -89,7 +92,7 @@ export function initRuntimeDialog() {
     sessionStorage.setItem(REOPEN, "1");
     if (!await apply()) {
       sessionStorage.removeItem(REOPEN);
-      throw new Error("未能重启服务，请点击「应用切换」重试。");
+      throw appError("runtime.restart_failed");
     }
   }
 
@@ -106,7 +109,7 @@ export function initRuntimeDialog() {
       state = next;
       render();
     } catch (error) {
-      if (token === generation) status.textContent = error.message;
+      if (token === generation) setText(status, error);
     }
     if (token === generation) poll();
   }
@@ -119,9 +122,9 @@ export function initRuntimeDialog() {
     render();
     let problem;
     try { await action(); }
-    catch (error) { problem = error.message; }
+    catch (error) { problem = error; }
     finally { busy = false; render(); poll(); }
-    if (problem) status.textContent = problem;
+    if (problem) setText(status, problem);
   }
 
   function open() {

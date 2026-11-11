@@ -24,6 +24,7 @@ import numpy as np
 import torch
 
 from flowhmr.model_files import VGGT, file_present, resolve_model
+from flowhmr.runtime_rocm import configure_windows_hip, supports_bf16
 from flowhmr.utils.runtime_image_io import write_image
 
 _repo_root = osp.normpath(osp.join(osp.dirname(__file__), "..", ".."))
@@ -127,6 +128,8 @@ def _camera_worker(video_path, output_npz, frame_range, frames, device, interval
     device = torch.device(device)
     try:
         if device.type == "cuda":
+            configure_windows_hip(torch, attention=True)
+            torch.cuda.set_device(device.index if device.index is not None else 0)
             _, total = torch.cuda.mem_get_info(device)
             limit = min(budget, camera_cuda_budget(device))
             if limit < 3 * _GIB:
@@ -147,6 +150,7 @@ def _camera_worker(video_path, output_npz, frame_range, frames, device, interval
             raise SystemExit(_CAMERA_PRECISION_EXIT) from None
         if device.type == "cuda" and (isinstance(error, torch.cuda.OutOfMemoryError) or any(
                 name in str(error).lower() for name in ("cuda out of memory", "cuda error: out of memory",
+                                                       "hip out of memory", "hip error: out of memory",
                                                        "cublas_status_alloc_failed", "cudnn_status_alloc_failed"))):
             print(f"  [vggt] CUDA memory limit: {error}", file=sys.stderr, flush=True)
             raise SystemExit(_CAMERA_MEMORY_EXIT) from None
@@ -318,7 +322,7 @@ def _vggt_opencv_to_yup_rt(camera_rt: torch.Tensor) -> torch.Tensor:
 
 
 def _vggt_dtype(device):
-    return torch.bfloat16 if torch.cuda.get_device_capability(device)[0] >= 8 else torch.float16
+    return torch.bfloat16 if supports_bf16(torch, device) else torch.float16
 
 
 def _load_vggt_model(checkpoint_path: str, device: torch.device, compact: bool) -> Any:

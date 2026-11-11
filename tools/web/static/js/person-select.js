@@ -3,6 +3,7 @@
 //    preview, frame count); toggle any rows or video boxes, then confirm together.
 //  - locked:   each queued or finished job shows its own selected person.
 import { $, show, el, personColor } from "./utils.js";
+import { message as m, setAttr, setText } from "./i18n.js";
 import * as api from "./api.js";
 
 const CHECK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -23,7 +24,7 @@ export function initPersonSelect(bus) {
     const box = el("span", cls);
     box.style.borderColor = personColor(i);
     const img = el("img");
-    img.alt = `人物 ${i + 1}`;
+    setAttr(img, "alt", m("person.number", { number: i + 1 }));
     img.loading = "lazy";
     img.src = api.personThumbUrl(jobId, i);
     img.onerror = () => { img.remove(); box.classList.add("no-img"); box.textContent = `${i + 1}`; };
@@ -42,9 +43,9 @@ export function initPersonSelect(bus) {
       const chip = el("span", "person-dot");
       const tag = el("span", "person-tag");
       chip.style.background = personColor(i);
-      name.append(chip, document.createTextNode(`人物 ${i + 1}`), tag);
+      name.append(chip, el("span", "", m("person.number", { number: i + 1 })), tag);
       text.append(name, el("span", "person-meta num",
-        `${c.num_frames} 帧 · ${(c.num_frames / 30).toFixed(1)} 秒 · 第 ${c.start + 1}–${c.end + 1} 帧`));
+        m("person.track_duration", { frames: c.num_frames, seconds: (c.num_frames / 30).toFixed(1), start: c.start + 1, end: c.end + 1 })));
       btn.append(text);
       const mark = el("span", "person-check");
       mark.innerHTML = CHECK_SVG;
@@ -62,15 +63,15 @@ export function initPersonSelect(bus) {
       btn.classList.toggle("selected", checked);
       btn.setAttribute("aria-pressed", String(checked));
       btn.disabled = submitting || confirmed;
-      tag.textContent = i === previewIndex ? "正在预览" : i === defaultIdx ? "建议" : "";
+      setText(tag, i === previewIndex ? m("person.previewing") : i === defaultIdx ? m("common.recommended") : "");
       show(tag, !!tag.textContent);
     });
-    $("personCount").textContent = `检测到 ${candidates.length} 人，已选 ${selected.size} 人。点击缩略图或视频框可勾选，再点一次取消。`;
+    setText($("personCount"), m("person.selection_help", { detected: candidates.length, selected: selected.size }));
     const btn = $("personConfirm");
     btn.disabled = !selected.size || submitting || confirmed;
-    btn.textContent = submitting ? "正在提交…" : confirmed ? "已确认，正在准备任务…"
-      : !selected.size ? "请勾选人物" : selected.size === 1 ? `确认人物 ${selected.values().next().value + 1}`
-      : `生成所选 ${selected.size} 人`;
+    setText(btn, submitting ? m("job.submitting") : confirmed ? m("person.confirmed")
+      : !selected.size ? m("person.check") : selected.size === 1 ? m("person.confirm_one", { number: selected.values().next().value + 1 })
+      : m("person.confirm_multiple", { count: selected.size }));
   }
 
   function renderLocked(job, candidate) {
@@ -81,10 +82,11 @@ export function initPersonSelect(bus) {
     const name = el("span", "person-name");
     const chip = el("span", "person-dot");
     chip.style.background = "#10b981";
-    name.append(chip, document.createTextNode(`人物 ${lockedIndex + 1}`));
-    const how = job.selection_auto ? "自动选取" : "手动选取";
+    name.append(chip, el("span", "", m("person.number", { number: lockedIndex + 1 })));
+    const how = m(job.selection_auto ? "person.chosen_auto" : "person.chosen_manual");
     text.append(name, el("span", "person-meta", how));
-    if (candidate) text.append(el("span", "person-meta num", `${candidate.num_frames} 帧 · 第 ${candidate.start + 1}–${candidate.end + 1} 帧`));
+    if (candidate) text.append(el("span", "person-meta num",
+      m("person.track", { frames: candidate.num_frames, start: candidate.start + 1, end: candidate.end + 1 })));
     row.append(text);
     list.append(row);
   }
@@ -109,7 +111,7 @@ export function initPersonSelect(bus) {
       confirmed = true;
       bus.emit("person:confirmed", result.people ?? [...selected]);
     } catch (e) {
-      if (jobId === id && mode === "choosing") setError(e.message || "选择人物失败");
+      if (jobId === id && mode === "choosing") setError(e.message ? e : m("person.choose_failed"));
     } finally {
       if (jobId === id) {
         submitting = false;
@@ -119,22 +121,22 @@ export function initPersonSelect(bus) {
   });
 
   function setError(msg) {
-    $("personError").textContent = msg;
+    setText($("personError"), msg);
     show("personError", !!msg);
   }
 
-  function setMode(m, job, candidate) {
-    mode = m;
+  function setMode(next, job, candidate) {
+    mode = next;
     const card = $("personCard");
-    card.classList.toggle("attention", m === "choosing");
-    $("personTitle").textContent = m === "locked" ? "正在重建人物" : "选择人物";
-    show("personConfirm", m === "choosing");
-    show("personCount", m === "choosing");
-    if (m !== "locked") show("personReselect", false);
-    show(card, m !== "hidden");
-    if (m === "choosing") renderChoosing();
+    card.classList.toggle("attention", next === "choosing");
+    setText($("personTitle"), m(next === "locked" ? "person.reconstructing" : "person.choose"));
+    show("personConfirm", next === "choosing");
+    show("personCount", next === "choosing");
+    if (next !== "locked") show("personReselect", false);
+    show(card, next !== "hidden");
+    if (next === "choosing") renderChoosing();
     else rows = [];
-    if (m === "locked") renderLocked(job, candidate);
+    if (next === "locked") renderLocked(job, candidate);
   }
 
   $("personReselect").addEventListener("click", () => bus.emit("person:reselect"));
@@ -169,8 +171,8 @@ export function initPersonSelect(bus) {
           bus.emit("person:locked", { candidate, index: lockedIndex });
           candidates = [];
         }
-        $("personTitle").textContent = job.status === "done" ? "已重建人物"
-          : job.status === "running" ? "正在重建人物" : "已选人物";
+        setText($("personTitle"), m(job.status === "done" ? "person.reconstructed"
+          : job.status === "running" ? "person.reconstructing" : "person.selected"));
       } else if (mode !== "hidden") {
         setMode("hidden");
         bus.emit("person:candidates", { candidates: [], selected: [], previewIndex: null });

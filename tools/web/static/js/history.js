@@ -1,5 +1,6 @@
 // Job history. Keep each row and its thumbnail mounted while progress changes.
-import { $, show, el, formatRelative, STATUS_LABEL, jobLabel } from "./utils.js";
+import { $, show, el, formatRelative, statusLabel, jobLabel } from "./utils.js";
+import { localize, message as m, setAttr, setText, t } from "./i18n.js";
 import * as api from "./api.js";
 
 const ACTIVE = new Set(["queued", "running", "waiting_user", "cancel_requested", "uploading"]);
@@ -8,19 +9,23 @@ const RERUN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 9.4h5M3 
 
 export function initHistory({ onOpen, onRerun, onDeleted }) {
   const list = $("historyList");
+  const more = $("historyMore");
   const deleteSelected = $("historyDeleteSelected"), deleteAll = $("historyDeleteAll");
   const selected = new Set(), rows = new Map();
   let current = null, busy = null, refreshVersion = 0, timer = null, hasActive = false;
-  let deletable = 0;
+  let deletable = 0, through = null, nextCursor = null, loadingMore = false;
 
   function updateActions() {
     $("historySelectedCount").textContent = selected.size;
     deleteSelected.disabled = busy !== null || selected.size === 0;
     deleteAll.disabled = busy !== null || deletable === 0;
+    show(more, !!nextCursor);
+    more.disabled = loadingMore || busy !== null;
+    setText(more, m(loadingMore ? "history.loading_more" : "history.more"));
   }
 
   function setError(msg) {
-    $("historyError").textContent = msg;
+    setText($("historyError"), msg);
     show("historyError", !!msg);
   }
 
@@ -51,7 +56,7 @@ export function initHistory({ onOpen, onRerun, onDeleted }) {
       setError("");
       void refresh();
       try { await (stopping ? api.cancelJob(id) : onRerun(id)); }
-      catch (err) { setError(err.message || (stopping ? "停止任务失败" : "重跑失败")); }
+      catch (err) { setError(err.message ? err : m(stopping ? "job.stop_failed" : "job.rerun_failed")); }
       finally { busy = null; void refresh(); }
     });
     info.append(name, sub);
@@ -70,46 +75,47 @@ export function initHistory({ onOpen, onRerun, onDeleted }) {
       entry.person = person;
       image.src = `${api.thumbnailUrl(job.id)}?person=${person ?? ""}&stage=${job.status}`;
     }
-    const label = jobLabel(job);
-    name.textContent = open.title = label;
-    check.setAttribute("aria-label", `选中 ${label} 以删除`);
+    const label = () => jobLabel(job);
+    setText(name, label);
+    setAttr(open, "title", label);
+    setAttr(check, "aria-label", m("history.check", { name: label }));
     if (entry.active !== active) action.innerHTML = active ? STOP : RERUN;
     entry.status = job.status;
     entry.active = active;
     row.classList.toggle("current", job.id === current);
     check.checked = selected.has(job.id);
     check.disabled = active || busy !== null;
-    const correction = job.params.postprocess
-      ? ` · ${job.params.correction_preset === "strong" ? "加强锁脚" : "标准锁脚"} · ${job.params.correction_floor_m == null ? "自动" : "手动"}地面` : "";
-    sub.textContent = job.recovered ? "从磁盘恢复" : `${formatRelative(job.created, now)}${correction} · CFG ${job.params.cfg_scale} · ${job.params.steps} 步`;
-    sub.title = sub.textContent;
+    const summary = () => job.recovered ? t("history.recovered") : [
+      formatRelative(job.created, now),
+      ...(job.params.postprocess ? [
+        t(job.params.correction_preset === "strong" ? "correction.lock_strong" : "correction.lock_normal"),
+        t(job.params.correction_floor_m == null ? "correction.floor_auto" : "correction.floor_manual"),
+      ] : []),
+      `CFG ${job.params.cfg_scale}`, t("history.step_count", { count: job.params.steps }),
+    ].join(" · ");
+    setText(sub, summary);
+    setAttr(sub, "title", summary);
     tag.className = `badge ${job.status}`;
-    tag.textContent = job.status === "running" ? `${job.progress}%` : STATUS_LABEL[job.status] || job.status;
-    action.title = active ? (job.status === "cancel_requested" ? "正在停止" : "停止这次任务") : "用当前设置重跑";
-    action.setAttribute("aria-label", `${action.title}: ${label}`);
+    setText(tag, job.status === "running" ? `${job.progress}%` : () => statusLabel(job.status));
+    const actionLabel = m(active ? (job.status === "cancel_requested" ? "job.cancel_requested" : "history.stop") : "progress.rerun");
+    setAttr(action, "title", actionLabel);
+    setAttr(action, "aria-label", () => `${localize(actionLabel)}: ${label()}`);
     action.disabled = busy !== null || job.status === "cancel_requested";
     action.classList.toggle("spin", busy === job.id);
   }
 
-  async function refresh() {
-    clearTimeout(timer);
-    const version = ++refreshVersion;
-    let data;
-    try { data = await api.getJobs(); } catch {
-      if (version === refreshVersion && hasActive) timer = setTimeout(refresh, 3000);
-      return;
-    }
+  function applyWindow(data) {
     const { jobs, now } = data;
-    if (version !== refreshVersion) return jobs;
     hasActive = jobs.some((job) => ACTIVE.has(job.status));
-    if (hasActive) timer = setTimeout(refresh, 2000);
+    nextCursor = data.next_cursor;
     const visible = new Set(jobs.map((job) => job.id));
     for (const id of selected) if (!visible.has(id)) selected.delete(id);
     for (const [id, entry] of rows) {
       if (!visible.has(id)) { entry.row.remove(); rows.delete(id); }
     }
     deletable = data.deletable_count;
-    $("historySummary").textContent = jobs.length ? `· ${jobs.length} 条` : "";
+    const total = data.total ?? jobs.length;
+    setText($("historySummary"), total ? `· ${jobs.length < total ? `${jobs.length}/` : ""}${total}` : "");
     show("historyEmpty", jobs.length === 0);
     jobs.forEach((job, i) => {
       const entry = rows.get(job.id) ?? createRow(job);
@@ -120,13 +126,58 @@ export function initHistory({ onOpen, onRerun, onDeleted }) {
     return jobs;
   }
 
+  function scheduleRefresh(delay = 2000) {
+    clearTimeout(timer);
+    if (hasActive && !loadingMore) timer = setTimeout(refresh, delay);
+  }
+
+  async function refresh() {
+    if (loadingMore) return;
+    clearTimeout(timer);
+    const version = ++refreshVersion;
+    try {
+      const data = await api.getJobs({ through });
+      if (version !== refreshVersion) return data.jobs;
+      const jobs = applyWindow(data);
+      scheduleRefresh();
+      return jobs;
+    } catch {
+      if (version === refreshVersion) scheduleRefresh(3000);
+    }
+  }
+
+  async function loadMore() {
+    if (!nextCursor || loadingMore || busy !== null) return;
+    setError("");
+    loadingMore = true;
+    refreshVersion++;
+    clearTimeout(timer);
+    updateActions();
+    try {
+      const page = await api.getJobs({ before: nextCursor });
+      // Reconcile the entire opened window so newly inserted or deleted jobs
+      // cannot make history skip a row across the pagination boundary.
+      const boundary = page.cursor ?? through;
+      const data = await api.getJobs({ through: boundary });
+      through = boundary;
+      applyWindow(data);
+    } catch (error) {
+      setError(m("history.load_failed", { detail: error }));
+    } finally {
+      loadingMore = false;
+      updateActions();
+      scheduleRefresh();
+    }
+  }
+
+  more.addEventListener("click", loadMore);
   $("historyRefresh").addEventListener("click", refresh);
   deleteSelected.addEventListener("click", async () => {
     const ids = [...selected];
-    if (ids.length && window.confirm(`删除选中的 ${ids.length} 条任务及其文件？`)) await removeRuns(ids);
+    if (ids.length && window.confirm(t("history.delete_confirm", { count: ids.length }))) await removeRuns(ids);
   });
   deleteAll.addEventListener("click", async () => {
-    if (window.confirm("删除所有已结束的任务及其文件？正在处理的任务会保留。")) await removeRuns();
+    if (window.confirm(t("history.clear_confirm"))) await removeRuns();
   });
 
   async function removeRuns(ids) {
@@ -136,9 +187,9 @@ export function initHistory({ onOpen, onRerun, onDeleted }) {
     try {
       const result = await api.deleteJobs(ids);
       selected.clear();
-      if (result.skipped.length) setError(`已删除 ${result.deleted.length} 条，${result.skipped.length} 条未删除。`);
+      if (result.skipped.length) setError(m("history.delete_result", { deleted: result.deleted.length, skipped: result.skipped.length }));
       onDeleted(result.deleted);
-    } catch (err) { setError(err.message || "删除任务失败"); }
+    } catch (err) { setError(err.message ? err : m("history.delete_failed")); }
     finally { busy = null; await refresh(); }
   }
 

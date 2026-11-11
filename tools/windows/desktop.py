@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import threading
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -20,6 +21,8 @@ import webview
 
 ROOT = Path(__file__).resolve().parents[2]
 TITLE = "FlowHMR"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from desktop_messages import MESSAGES, read_language, save_language
 
 
 class _JobBasicLimits(ctypes.Structure):
@@ -105,8 +108,10 @@ class DesktopBackend:
             raise subprocess.CalledProcessError(code, args)
 
 
-def status_page(heading, detail):
-    return f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+def status_page(state):
+    language = read_language()
+    heading, detail = MESSAGES[language][state]
+    return f"""<!doctype html><html lang="{language}"><meta charset="utf-8">
 <style>
 body {{margin:0;display:grid;place-items:center;min-height:100vh;background:#252525;color:#ededed;
        font:14px 'Segoe UI','Microsoft YaHei',sans-serif}}
@@ -149,6 +154,55 @@ def open_runtime_folder():
     os.startfile(directory)
 
 
+def expose_model_folder_picker(window, port, backend):
+    """Allow only the local FlowHMR page to open the desktop folder picker."""
+    origin = f"http://127.0.0.1:{port}"
+    last_directory = Path.home() / "Downloads"
+    picker_lock = threading.Lock()
+
+    def is_flowhmr_page():
+        if backend.closed.is_set():
+            return False
+        current = urlsplit(window.get_current_url() or "")
+        return f"{current.scheme}://{current.netloc}" == origin
+
+    def choose_model_folder():
+        nonlocal last_directory
+        if not is_flowhmr_page() or not picker_lock.acquire(blocking=False):
+            return None
+        try:
+            selection = window.create_file_dialog(webview.FileDialog.FOLDER,
+                                                  directory=os.fspath(last_directory))
+            if selection and is_flowhmr_page():
+                last_directory = Path(selection[0])
+                return os.fspath(last_directory)
+            return None
+        finally:
+            picker_lock.release()
+
+    window.expose(choose_model_folder)
+
+
+def expose_language_preference(window, port, backend):
+    def is_flowhmr_page():
+        current = urlsplit(window.get_current_url() or "")
+        return not backend.closed.is_set() and (current.scheme, current.netloc) == ("http", f"127.0.0.1:{port}")
+
+    def get_ui_language():
+        return read_language() if is_flowhmr_page() else None
+
+    def set_ui_language(language):
+        if not is_flowhmr_page():
+            return False
+        try:
+            return save_language(language)
+        except OSError:
+            logging.exception("Could not persist the launcher language")
+            return False
+
+    window.expose(get_ui_language, set_ui_language)
+
+
 def connect(window, port, backend):
     if backend.closed.is_set():
         return
@@ -168,14 +222,14 @@ def connect(window, port, backend):
         if backend.closed.is_set():
             return
         if result.returncode:
-            raise RuntimeError(f"后端启动失败（{result.returncode}），详情见 logs/desktop-launcher.log。")
+            raise RuntimeError(f"FlowHMR backend exited with code {result.returncode}")
         window.load_url(f"http://127.0.0.1:{port}/")
         logging.info("Loaded local FlowHMR at port %d", port)
-    except Exception as error:
+    except Exception:
         if backend.closed.is_set():
             return
         logging.exception("Failed to connect to FlowHMR")
-        window.load_html(status_page("FlowHMR 启动失败", f"{error} 请查看 logs/desktop.log。"))
+        window.load_html(status_page("failed"))
 
 
 def expose_runtime_restart(window, port, backend):
@@ -186,7 +240,7 @@ def expose_runtime_restart(window, port, backend):
         try:
             if backend.closed.is_set():
                 return
-            window.load_html(status_page("正在切换运行环境", "推理服务重启后会自动回到 FlowHMR。"))
+            window.load_html(status_page("switching"))
             with (ROOT / "logs/desktop-launcher.log").open("ab") as log:
                 backend.run_helper(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                                     str(ROOT / "tools/windows/stop-web.ps1")], cwd=ROOT, stdout=log,
@@ -298,11 +352,13 @@ def main():
         if (fixed_webview / "msedgewebview2.exe").is_file():
             webview.settings["WEBVIEW2_RUNTIME_PATH"] = os.fspath(fixed_webview)
         window = webview.create_window(
-            TITLE, html=status_page("正在启动 FlowHMR", "正在打开界面。推理模型将在首次生成时加载。"),
+            TITLE, html=status_page("starting"),
             width=1440, height=900, min_size=(960, 640), background_color="#252525", text_select=True,
         )
         window.expose(open_models_folder)
         window.expose(open_runtime_folder)
+        expose_model_folder_picker(window, port, backend)
+        expose_language_preference(window, port, backend)
         expose_runtime_restart(window, port, backend)
         window.events.before_show += configure_downloads
         window.events.shown += lambda: threading.Thread(target=connect, args=(window, port, backend), daemon=True).start()

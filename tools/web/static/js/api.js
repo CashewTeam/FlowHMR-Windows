@@ -1,11 +1,23 @@
 // Thin client for the FlowHMR demo server (tools/web/server.py).
+import { appError, localize, message, serverMessage } from "./i18n.js";
+
+function httpError(payload, status, statusText = "") {
+  const fallback = payload?.error || message("server.http_status", { status, statusText });
+  const i18n = serverMessage(payload?.error_code ?? payload?.code, payload?.error_params, fallback);
+  return Object.assign(new Error(localize(i18n)), { i18n, status });
+}
 
 async function request(path, options = {}) {
-  const res = await fetch(path, options);
+  let res;
+  try { res = await fetch(path, options); }
+  catch (error) {
+    if (error.name === "AbortError") throw error;
+    throw appError("server.network_error");
+  }
   if (!res.ok) {
-    let msg = `${res.status} ${res.statusText}`;
-    try { msg = (await res.json()).error || msg; } catch { /* not JSON */ }
-    throw new Error(msg);
+    let body;
+    try { body = await res.json(); } catch { /* not JSON */ }
+    throw httpError(body, res.status, res.statusText);
   }
   return res;
 }
@@ -19,14 +31,21 @@ const postJson = (path, body) => json(path, {
 
 export const getInfo = () => json("/api/info", { cache: "no-store" });
 export const getModelDownload = () => json("/api/models/download", { cache: "no-store" });
-export const startModelDownload = () => postJson("/api/models/download");
+export const startModelDownload = (group) => postJson("/api/models/download", group ? { group } : {});
 export const stopModelDownload = (id) => postJson("/api/models/download/stop", { id });
 export const verifyModels = () => postJson("/api/models/verify");
+export const getModelImport = () => json("/api/models/import", { cache: "no-store" });
+export const startModelImport = (path) => postJson("/api/models/import", { path });
 export const getRuntime = () => json("/api/runtime", { cache: "no-store" });
 export const startRuntimeDownload = (version) => postJson("/api/runtime/download", { version });
 export const stopRuntimeDownload = (id) => postJson("/api/runtime/download/stop", { id });
 export const selectRuntime = (version) => postJson("/api/runtime/select", { version });
-export const getJobs = () => json("/api/jobs");
+export function getJobs({ before, through } = {}) {
+  const query = new URLSearchParams({ limit: "20" });
+  if (before) query.set("before", before);
+  if (through) query.set("through", through);
+  return json(`/api/jobs?${query}`, { cache: "no-store" });
+}
 export const deleteJobs = (ids) => json("/api/jobs", {
   method: "DELETE",
   headers: { "Content-Type": "application/json" },
@@ -71,9 +90,9 @@ export function uploadVideo(file, params, onProgress) {
       let res = {};
       try { res = JSON.parse(xhr.responseText); } catch { /* noop */ }
       if (xhr.status === 200 && res.job_id) resolve(res.job_id);
-      else reject(new Error(res.error || `Upload failed (${xhr.status})`));
+      else reject(httpError(res, xhr.status));
     };
-    xhr.onerror = () => reject(new Error("Upload failed (network error)"));
+    xhr.onerror = () => reject(appError("source.upload_network"));
     xhr.open("POST", "/api/upload");
     xhr.send(form);
   });

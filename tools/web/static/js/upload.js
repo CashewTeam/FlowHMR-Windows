@@ -1,5 +1,6 @@
 // "Video" card: drag & drop / browse, shows the chosen file.
 import { $, show, formatBytes } from "./utils.js";
+import { message as m, setText } from "./i18n.js";
 
 const VIDEO_RE = /\.(mp4|mov|avi|mkv|webm|m4v)$/i;
 
@@ -11,7 +12,7 @@ export function initUpload(bus) {
   const pick = (f) => {
     if (!f) return;
     if (!f.type.startsWith("video/") && !VIDEO_RE.test(f.name)) {
-      setError("请选择 MP4、MOV、AVI、MKV 或 WebM 视频。");
+      setError(m("source.format"));
       return;
     }
     setError("");
@@ -31,7 +32,7 @@ export function initUpload(bus) {
   };
 
   const setError = (msg) => {
-    $("uploadError").textContent = msg;
+    setText($("uploadError"), msg);
     show("uploadError", !!msg);
   };
 

@@ -12,6 +12,7 @@ import torch
 from torch import Tensor
 
 from flowhmr.model_files import missing_model_paths, sam3d_paths
+from flowhmr.runtime_rocm import supports_bf16
 
 # Repo root + local sam_3d_body package path
 _repo_root = osp.normpath(osp.join(osp.dirname(__file__), "..", ".."))
@@ -475,7 +476,7 @@ def _call_progress(
 def _maybe_convert_backbone_to_fp16(sam_model, device: torch.device) -> None:
     if sam_model.backbone_dtype != torch.bfloat16:
         return
-    gpu_supports_bf16_tc = torch.cuda.get_device_capability(device)[0] >= 8
+    gpu_supports_bf16_tc = supports_bf16(torch, device)
     if gpu_supports_bf16_tc:
         return
 

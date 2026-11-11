@@ -37,6 +37,9 @@ def recv_msg(conn: socket.socket) -> dict:
 
 
 def _worker_main(gpu_id: int, port: int, ready_event):
+    from flowhmr.runtime_rocm import configure_windows_hip
+
+    configure_windows_hip(torch, attention=True)
     torch.cuda.set_device(gpu_id)
     device = torch.device(f"cuda:{gpu_id}")
 

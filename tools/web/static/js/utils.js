@@ -1,3 +1,5 @@
+import { getLanguage, setText, t } from "./i18n.js";
+
 export const $ = (id) => document.getElementById(id);
 
 export function show(el, visible = true) {
@@ -7,7 +9,7 @@ export function show(el, visible = true) {
 export function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
+  if (text !== undefined) setText(node, text);
   return node;
 }
 
@@ -19,10 +21,11 @@ export function formatSeconds(s) {
 
 export function formatRelative(tsSeconds, nowSeconds) {
   const d = Math.max(0, (nowSeconds ?? Date.now() / 1000) - tsSeconds);
-  if (d < 60) return "刚刚";
-  if (d < 3600) return `${Math.floor(d / 60)} 分钟前`;
-  if (d < 86400) return `${Math.floor(d / 3600)} 小时前`;
-  return new Date(tsSeconds * 1000).toLocaleString();
+  if (d < 60) return t("time.now");
+  const relative = new Intl.RelativeTimeFormat(getLanguage(), { numeric: "always" });
+  if (d < 3600) return relative.format(-Math.floor(d / 60), "minute");
+  if (d < 86400) return relative.format(-Math.floor(d / 3600), "hour");
+  return new Date(tsSeconds * 1000).toLocaleString(getLanguage());
 }
 
 export function formatBytes(n) {
@@ -30,15 +33,11 @@ export function formatBytes(n) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export const STATUS_LABEL = {
-  uploading: "上传中", queued: "排队中", running: "运行中",
-  waiting_user: "等待选人", cancel_requested: "正在停止", cancelled: "已停止",
-  done: "已完成", failed: "失败", needs_alignment: "待对齐",
-};
+export const statusLabel = (status) => t(`job.${status}`, {}, status);
 
 export function jobLabel(job) {
-  if (job.person_count > 1) return `${job.filename} · ${job.person_count} 人`;
-  return job.selected_person == null ? job.filename : `${job.filename} · 人物 ${job.selected_person + 1}`;
+  if (job.person_count > 1) return `${job.filename} · ${t("person.count", { count: job.person_count })}`;
+  return job.selected_person == null ? job.filename : `${job.filename} · ${t("person.number", { number: job.selected_person + 1 })}`;
 }
 
 /** Distinct colours for person boxes; index = candidate index. */

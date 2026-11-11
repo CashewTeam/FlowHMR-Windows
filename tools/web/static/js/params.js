@@ -1,5 +1,6 @@
 // "Settings" card: person selection, camera mode, sampling and post-processing.
 import { $, show } from "./utils.js";
+import { appError, message as m, setAttr, setText } from "./i18n.js";
 
 const MAX_SMOOTHING_FRAMES = 3;
 const validStrength = (value) => Number.isFinite(value) && value >= 0 && value <= 1;
@@ -21,7 +22,7 @@ function bindToggle(id) {
 function samChunkSize(value) {
   if (typeof value === "string" && /^\d+$/.test(value.trim())) value = Number(value.trim());
   if (!Number.isSafeInteger(value) || value < 1) {
-    throw new Error("SAM 批次帧数须为正整数。");
+    throw appError("server.param_integer", { field: m("field.sam_chunk_size"), min: 1 });
   }
   return value;
 }
@@ -52,10 +53,10 @@ export function initParams(defaults, manualBatchDefault) {
     if (!validStrength(value)) return;
     smoothingSlider.value = value;
     const frames = Number(readSmoothingFrames().toPrecision(6));
-    smoothingSlider.setAttribute("aria-valuetext", value === 0 ? "0，关闭" : `${value}，对应 ${frames} 帧`);
-    smoothingHint.textContent = legacyFrames > MAX_SMOOTHING_FRAMES
-      ? `原任务使用 ${legacyFrames} 帧；重跑时上限为 ${MAX_SMOOTHING_FRAMES} 帧。`
-      : value === 0 ? `0 为关闭；1 对应 ${MAX_SMOOTHING_FRAMES} 帧。` : `当前对应 ${frames} 帧。`;
+    setAttr(smoothingSlider, "aria-valuetext", value === 0 ? m("common.off") : m("settings.smoothing_aria", { value, frames }));
+    setText(smoothingHint, legacyFrames > MAX_SMOOTHING_FRAMES
+      ? m("settings.smoothing_old", { frames: legacyFrames, max: MAX_SMOOTHING_FRAMES })
+      : value === 0 ? m("settings.smoothing_default_hint") : m("settings.smoothing_frames", { frames }));
   }
   function smoothingEdited() {
     restoredSmoothingFrames = null;
@@ -70,7 +71,7 @@ export function initParams(defaults, manualBatchDefault) {
     const value = soleFit.valueAsNumber;
     if (!validStrength(value)) return;
     soleFitSlider.value = value;
-    soleFitSlider.setAttribute("aria-valuetext", value === 0 ? "关闭" : soleFitSlider.value);
+    setAttr(soleFitSlider, "aria-valuetext", value === 0 ? m("common.off") : soleFitSlider.value);
   }
   soleFitSlider.addEventListener("input", () => {
     soleFit.value = soleFitSlider.value;
@@ -85,11 +86,7 @@ export function initParams(defaults, manualBatchDefault) {
   const syncCamera = () => {
     stride.disabled = cameraMode.value !== "manual";
     show("manualCameraRow", !stride.disabled);
-    $("cameraHint").textContent = {
-      auto: "用于镜头明显旋转的素材。自动选择采样间隔；显存紧张时会节省显存。",
-      static: "仅平移、推拉或缩放通常选固定机位。镜头明显转向、俯仰或滚转时，选运动相机。",
-      manual: "用于镜头明显旋转的素材。间隔越小，采样越密，显存开销越高。",
-    }[cameraMode.value];
+    setText($("cameraHint"), m(`camera.${cameraMode.value}_hint`));
   };
   cameraMode.addEventListener("change", syncCamera);
   const syncCorrection = () => {
@@ -98,9 +95,7 @@ export function initParams(defaults, manualBatchDefault) {
     show("soleFitRow", enabled);
     show("correctionFloorRow", enabled);
     show("correctionHeightRow", enabled && correctionGround.value === "manual");
-    $("footLockHint").textContent = footLockPreset.value === "strong"
-      ? "短暂丢失落脚信号时继续锁定；有意滑步时建议用标准。"
-      : "锁住稳定落脚的脚底，保留自然过渡。";
+    setText($("footLockHint"), m(footLockPreset.value === "strong" ? "correction.strong_hint" : "correction.normal_hint"));
   };
   $("optPostprocess").addEventListener("click", syncCorrection);
   footLockPreset.addEventListener("change", syncCorrection);
@@ -136,8 +131,8 @@ export function initParams(defaults, manualBatchDefault) {
   };
   const read = (overrides = {}, remember = false) => {
     const strength = soleFit.valueAsNumber;
-    if (post.get() && !validStrength(strength)) throw new Error("脚掌贴地强度须为 0 到 1 的数字。");
-    if (!validStrength(smoothing.valueAsNumber)) throw new Error("滤波强度须为 0 到 1 的数字。");
+    if (post.get() && !validStrength(strength)) throw appError("server.param_sole_fit");
+    if (!validStrength(smoothing.valueAsNumber)) throw appError("settings.smoothing_invalid");
     const out = {
       manual_select: manual.get(),
       postprocess: post.get(),
@@ -154,13 +149,13 @@ export function initParams(defaults, manualBatchDefault) {
       steps: parseInt(steps.value, 10),
       smoothing_frames: readSmoothingFrames(),
     };
-    if (!Number.isInteger(out.seed) || out.seed < 0 || out.seed > 2147483647) throw new Error("随机种子须为 0 到 2147483647 的整数。");
-    if (out.correction_floor_m !== null && !Number.isFinite(out.correction_floor_m)) throw new Error("请输入修正地面的高度（米）。");
-    if (!Number.isFinite(out.cfg_scale) || out.cfg_scale < 0 || out.cfg_scale > 10) throw new Error("CFG 须在 0 到 10 之间。");
+    if (!Number.isInteger(out.seed) || out.seed < 0 || out.seed > 2147483647) throw appError("server.param_bounds", { field: m("field.seed"), min: 0, max: 2147483647 });
+    if (out.correction_floor_m !== null && !Number.isFinite(out.correction_floor_m)) throw appError("server.param_floor");
+    if (!Number.isFinite(out.cfg_scale) || out.cfg_scale < 0 || out.cfg_scale > 10) throw appError("server.param_bounds", { field: "CFG", min: 0, max: 10 });
     if (overrides.vggt_interval == null && cameraMode.value === "manual" && (!Number.isInteger(out.vggt_interval) || out.vggt_interval < 1 || out.vggt_interval > 120)) {
-      throw new Error("手动相机采样间隔须为 1 到 120 帧。");
+      throw appError("server.param_bounds", { field: m("field.vggt_interval"), min: 1, max: 120 });
     }
-    if (!Number.isInteger(out.steps) || out.steps < 1 || out.steps > 100) throw new Error("ODE 步数须为 1 到 100 的整数。");
+    if (!Number.isInteger(out.steps) || out.steps < 1 || out.steps > 100) throw appError("server.param_bounds", { field: m("field.steps"), min: 1, max: 100 });
     return out;
   };
 

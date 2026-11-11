@@ -1,5 +1,6 @@
 // Page controller: wires the cards together and polls the current job.
 import { $, show, el, createBus, jobLabel, personColor } from "./utils.js";
+import { appError, message as m, setText, setupLocalization } from "./i18n.js";
 import * as api from "./api.js";
 import { initUpload } from "./upload.js";
 import { initParams } from "./params.js";
@@ -13,6 +14,7 @@ import { initTrim } from "./trim.js";
 import { initModelDialog } from "./models.js";
 import { initRuntimeDialog } from "./runtime.js";
 
+setupLocalization();
 const themeOptions = $("themeOptions");
 const themeButtons = [...themeOptions.querySelectorAll("[data-theme-choice]")];
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
@@ -73,7 +75,7 @@ function setExportPeople(scene) {
     input.type = "checkbox";
     input.value = person;
     input.checked = true;
-    label.append(input, dot, document.createTextNode(`人物 ${person}`));
+    label.append(input, dot, el("span", "", m("person.number", { number: person })));
     return { label, input };
   });
   $("fbxPeopleList").replaceChildren(...exportPeople.map(({ label }) => label));
@@ -120,8 +122,8 @@ let params = null;
 function renderModelStatus(loaded, loading = false) {
   const missing = info?.model_files?.items.some((item) => item.blocking);
   $("btnModels").classList.toggle("needs-models", !!missing);
-  $("modelInfo").textContent = !info ? "未连接" : missing ? "缺少必需模型"
-    : loading ? "正在加载…" : loaded ? info.device : "待加载";
+  setText($("modelInfo"), !info ? m("connection.offline") : missing ? m("models.required_missing")
+    : loading ? m("models.loading") : loaded ? info.device : m("models.deferred"));
 }
 
 function applyModelInfo(next) {
@@ -131,14 +133,14 @@ function applyModelInfo(next) {
   runtime.summarize(info?.runtime);
   const hamerReady = !!info?.hamer_available;
   $("optHamer").disabled = !hamerReady;
-  $("hamerHint").textContent = hamerReady ? "精修手指 · 生成耗时增加" : "请在右上角「模型」查看 HaMeR 缺项。";
+  setText($("hamerHint"), m(hamerReady ? "hamer.hint" : "hamer.missing_hint"));
   params?.refreshHamer();
   if (variantsChanged) viewer.setBodyVariants(info?.body_variants);
 }
 
 initModelDialog(async () => {
   const next = await api.getInfo();
-  if (!next.model_files) throw new Error("请重启 FlowHMR 后台服务后再检查。");
+  if (!next.model_files) throw appError("connection.restart");
   applyModelInfo(next);
   return next.model_files;
 });
@@ -146,23 +148,26 @@ initModelDialog(async () => {
 // ------------------------------------------------------------------ boot
 try {
   applyModelInfo(await api.getInfo());
-  $("uploadHint").textContent = `MP4、MOV、AVI、MKV、WebM · ${info.max_upload_mb} MB 以内`;
+  setText($("uploadHint"), m("source.size_limit", { max: info.max_upload_mb }));
 } catch {
   applyModelInfo(null);
 }
 if (info?.postprocess_available === false) {
   $("optPostprocess").disabled = true;
-  $("postprocessHint").textContent = "本机未安装接触修正组件";
+  setText($("postprocessHint"), m("correction.unavailable"));
 }
 params = initParams(info?.defaults ?? {}, info?.sam_manual_default ?? 24);
 if (info?.runtime?.supported) runtime.restore();
 trim.setCapacity(info?.motion_frame_capacity);
 const jobs = (await history.refresh()) ?? [];
 const savedJob = localStorage.getItem("flowhmr-last-job");
-const initialJob = jobs.find((job) => job.status === "waiting_user" || job.status === "running")
+let initialJob = jobs.find((job) => job.status === "waiting_user" || job.status === "running")
   ?? jobs.find((job) => ACTIVE.has(job.status))
-  ?? jobs.find((job) => job.id === savedJob)
-  ?? jobs.find((job) => job.status === "done") ?? jobs[0];
+  ?? jobs.find((job) => job.id === savedJob);
+if (!initialJob && savedJob) {
+  try { initialJob = await api.getJob(savedJob); } catch { /* job may have been deleted */ }
+}
+initialJob ??= jobs.find((job) => job.status === "done") ?? jobs[0];
 if (initialJob) void openJob(initialJob.id, true);
 syncSubmit();
 
@@ -172,7 +177,7 @@ bus.on("file:selected", (file) => {
     resetJobView();
     history.setCurrent(null);
     show("jobCard", false);
-    viewer.setStatus("点击「生成 3D 动作」处理新视频");
+    viewer.setStatus(m("view.new_video"));
   }
   params.newSource();
   trim.begin();
@@ -195,7 +200,7 @@ $("btnAlignScene").addEventListener("click", async () => {
   const button = $("btnAlignScene");
   button.disabled = true;
   try { await api.prepareScene(id); if (id === currentJob) await poll(); }
-  catch (e) { if (id === currentJob) progress.showActionError(e.message); }
+  catch (e) { if (id === currentJob) progress.showActionError(e); }
   finally { button.disabled = false; }
 });
 $("btnStopRun").addEventListener("click", async () => {
@@ -206,7 +211,7 @@ $("btnStopRun").addEventListener("click", async () => {
     await api.cancelJob(id);
     if (id === currentJob) await poll();
   } catch (e) {
-    if (id === currentJob) progress.showActionError(e.message || "停止任务失败");
+    if (id === currentJob) progress.showActionError(e.message ? e : m("job.stop_failed"));
   }
 });
 $("btnRerun").addEventListener("click", () => rerunCurrent());
@@ -217,7 +222,7 @@ async function rerunCurrent(overrides) {
   try {
     await rerun(currentJob, overrides);
   } catch (e) {
-    progress.showActionError(e.message || "重跑失败");
+    progress.showActionError(e.message ? e : m("job.rerun_failed"));
   }
 }
 
@@ -226,7 +231,7 @@ function syncSubmit() {
   const needsRuntime = info?.runtime?.supported && !info.runtime.ready;
   show(btn, !currentJob || !!upload.getFile());
   btn.disabled = submitting || (!needsRuntime && !upload.getFile());
-  btn.textContent = submitting ? "正在提交…" : needsRuntime ? "设置运行环境" : "生成 3D 动作";
+  setText(btn, m(submitting ? "job.submitting" : needsRuntime ? "runtime.setup" : "settings.generate"));
   $("btnRerun").disabled = $("btnSafeRerun").disabled = $("personReselect").disabled = submitting;
 }
 
@@ -235,7 +240,7 @@ async function submit() {
   const file = upload.getFile();
   if (!file) return;
   let p;
-  try { p = { ...params.read(), ...trim.read() }; } catch (e) { upload.setError(e.message); return; }
+  try { p = { ...params.read(), ...trim.read() }; } catch (e) { upload.setError(e); return; }
   submitting = true;
   syncSubmit();
   resetJobView();
@@ -244,7 +249,7 @@ async function submit() {
     upload.clear();
     await openJob(id);
   } catch (e) {
-    progress.showError(e.message);
+    progress.showError(e);
   } finally {
     submitting = false;
     syncSubmit();
@@ -285,7 +290,7 @@ function resetJobView() {
   show("btnAlignScene", false);
   show("btnSafeRerun", false);
   show("btnStopRun", false);
-  $("workspaceState").textContent = "FlowHMR";
+  setText($("workspaceState"), "FlowHMR");
 }
 
 function clearDeletedJobs(ids) {
@@ -295,7 +300,7 @@ function clearDeletedJobs(ids) {
   history.setCurrent(null);
   preview.clear();
   show("jobCard", false);
-  viewer.setStatus("导入视频后，点击「生成 3D 动作」");
+  viewer.setStatus(m("view.empty"));
   syncSubmit();
 }
 
@@ -323,7 +328,7 @@ async function poll() {
     job = await api.getJob(id);
   } catch (e) {
     if (version === pollVersion) {
-      $("modelInfo").textContent = "正在重新连接…";
+      setText($("modelInfo"), m("connection.reconnecting"));
       pollTimer = setTimeout(poll, 2000);
     }
     return;
@@ -332,18 +337,18 @@ async function poll() {
   renderModelStatus(job.models_loaded ?? info?.models_loaded ?? true, job.status === "running" && job.loading_models);
 
   progress.render(job);
-  viewer.setStatus(job.status === "done" ? "正在载入 3D 动作…"
-    : job.status === "needs_alignment" ? "点击右侧「对齐场景」查看多人预览"
-    : job.status === "failed" ? "生成失败，详见右侧任务进度"
-    : job.status === "cancelled" ? "任务已停止"
-    : job.status === "cancel_requested" ? "正在停止…"
-    : job.status === "waiting_user" ? "请在左侧勾选人物"
-    : job.status === "queued" ? "等待前面的任务完成…"
-    : job.scene_state === "running" ? "正在对齐多人站位…"
-    : job.loading_models ? "首次运行，正在加载模型…"
-    : "正在生成 3D 动作…");
+  viewer.setStatus(m(job.status === "done" ? "view.loading"
+    : job.status === "needs_alignment" ? "view.alignment_needed"
+    : job.status === "failed" ? "view.job_failed"
+    : job.status === "cancelled" ? "job.stopped"
+    : job.status === "cancel_requested" ? "job.stopping"
+    : job.status === "waiting_user" ? "view.choose_people"
+    : job.status === "queued" ? "view.job_queued"
+    : job.scene_state === "running" ? "job.scene_aligning"
+    : job.loading_models ? "job.model_loading"
+    : "job.generating"));
   const videoChanged = ["waiting_user", "done"].includes(job.status) && lastStatus !== job.status;
-  preview.showJob(api.videoUrl(id), jobLabel(job), { refresh: videoChanged });
+  preview.showJob(api.videoUrl(id), () => jobLabel(job), { refresh: videoChanged });
   person.update(job);
   trim.setSource(job.source_frames);
   trim.setEditable(!ACTIVE.has(job.status));
@@ -372,8 +377,8 @@ async function poll() {
       if (meta && id === currentJob) void loadTracks(id, job.scene);
     } catch (e) {
       if (id === currentJob) {
-        viewer.setStatus("3D 预览载入失败 · 可从「文件」菜单导出");
-        progress.showActionError(`3D 预览载入失败：${e.message}`);
+        viewer.setStatus(m("view.preview_failed"));
+        progress.showActionError(m("view.preview_detail", { detail: e }));
       }
     }
   }

@@ -1,4 +1,5 @@
 import { $ } from "./utils.js";
+import { appError, message as m, setAttr, setText, t } from "./i18n.js";
 
 // The trim lane is in source frames. The playback lane is in generated motion frames.
 export function initTrim({ video, clock, seek }) {
@@ -18,12 +19,17 @@ export function initTrim({ video, clock, seek }) {
     lane.style.setProperty("--trim-rest", (max - Number(end.value)) / denominator);
     start.disabled = end.disabled = !active || !editable || frames < 2;
     startValue.disabled = endValue.disabled = full.disabled = !active || !editable;
-    start.setAttribute("aria-valuetext", `第 ${first} 帧`);
-    end.setAttribute("aria-valuetext", endValue.value ? `第 ${last} 帧` : "自动到人物轨迹结束");
-    const source = frames ? ` · 素材${exact ? "" : "约"} ${frames} 帧` : "";
-    const range = first === 1 && !endValue.value ? "完整人物轨迹" : `第 ${first} 帧至${endValue.value ? `第 ${last} 帧` : "自动结束"}`;
-    const limit = capacity && frames && last - first + 1 > capacity ? ` · 模型单段 ${capacity} 帧` : "";
-    $("rangeSummary").textContent = `处理范围 · ${range}${source}${limit}`;
+    const hasEnd = !!endValue.value;
+    setAttr(start, "aria-valuetext", m("timeline.frame", { frame: first }));
+    setAttr(end, "aria-valuetext", hasEnd ? m("timeline.frame", { frame: last }) : m("timeline.auto_end"));
+    setText($("rangeSummary"), () => [
+      t("timeline.range"),
+      first === 1 && !hasEnd ? t("timeline.entire") : t("timeline.from_to", {
+        first, end: hasEnd ? m("timeline.frame", { frame: last }) : m("timeline.auto_end_short"),
+      }),
+      frames ? t(exact ? "timeline.source_count" : "timeline.estimated_count", { frames }) : "",
+      capacity && frames && last - first + 1 > capacity ? t("timeline.capacity", { frames: capacity }) : "",
+    ].filter(Boolean).join(" · "));
   }
 
   function estimate() {
@@ -74,9 +80,9 @@ export function initTrim({ video, clock, seek }) {
     read() {
       const first = startValue.valueAsNumber, last = endValue.value === "" && !endValue.validity.badInput ? null : endValue.valueAsNumber;
       if (!Number.isSafeInteger(first) || first < 1 || (last !== null && (!Number.isSafeInteger(last) || last < first))) {
-        throw new Error("请设置有效的起止帧，结束帧也可留空自动检测。");
+        throw appError("timeline.invalid");
       }
-      if (exact && (first > frames || (last !== null && last > frames))) throw new Error(`素材共 ${frames} 帧，请检查处理区间。`);
+      if (exact && (first > frames || (last !== null && last > frames))) throw appError("timeline.out_of_range", { frames });
       return { auto_frames: true, start_frame: first - 1, end_frame: last === null ? null : last - 1 };
     },
   };

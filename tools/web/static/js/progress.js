@@ -1,147 +1,235 @@
-// "Pipeline" card: queue state, per-stage progress bars and elapsed time, errors.
-import { $, show, el, formatSeconds, STATUS_LABEL, jobLabel } from "./utils.js";
+// "Pipeline" card: queue state, stage progress and elapsed time, errors.
+import { $, show, el, formatSeconds, statusLabel, jobLabel } from "./utils.js";
+import { localize, message as m, serverMessage, setAttr, setText, t } from "./i18n.js";
 
-const STAGE_LABEL = { Detection: "人物检测", Camera: "相机估计", "Static camera": "固定机位", "Body features": "SAM 特征", Generation: "动作生成", "Hand refinement": "手指精修" };
-const MESSAGES = {
-  "Starting": "正在准备视频", "Starting generation": "正在生成动作", "Building 3D mesh": "正在构建 3D 预览",
-  "Cancelled": "任务已停止", "Run stopped when FlowHMR restarted.": "任务已停止，素材和已完成的缓存已保留",
-  "Stop requested; stopping at the next safe step": "正在停止，已完成的缓存会保留",
-};
+// Older histories and older runtimes carry human-readable progress strings.
+// Prefer structured message_code/message_params when present.
+const LEGACY = new Map(Object.entries({
+  "Starting": "job.preparing",
+  "Starting bbox extraction": "stage.detection",
+  "Bbox cached": "job.cached_detection",
+  "Transcoded, detecting": "stage.detection",
+  "Waiting for person selection": "job.waiting_user",
+  "Bbox done": "job.detection_done",
+  "Using a static camera": "camera.static",
+  "Static camera: estimation skipped": "camera.static",
+  "Starting VGGT camera extraction": "stage.camera",
+  "VGGT camera ready": "job.camera_ready",
+  "已复用相机估计": "job.cached_camera",
+  "Starting SAM extraction": "stage.feature_extract",
+  "SAM cached": "job.cached_features",
+  "SAM done": "job.features_done",
+  "Starting generation": "job.generating",
+  "ODE sampling done, exporting": "job.exporting",
+  "正在平滑动作": "job.smoothing",
+  "Origin FBX saved": "job.fbx_saved",
+  "正在修正脚底接触": "job.correcting",
+  "动作生成完成": "job.generated",
+  "Generation complete": "job.generated",
+  "正在启动 HaMeR 手指精修": "job.hamer_start",
+  "正在加载 HaMeR 手指模型": "job.hamer_start",
+  "正在保存手指精修结果": "job.hamer_saving",
+  "手指精修完成": "job.hamer_done",
+  "HaMeR 手指精修完成": "job.hamer_done",
+  "HaMeR 未找到有效手部画面，已保留原动作": "progress.hamer_untracked",
+  "Building 3D mesh": "job.building",
+  "Waiting in queue": "progress.queue",
+  "Cancelled": "job.stopped",
+  "Stopped by user": "job.stopped",
+  "Run stopped when FlowHMR restarted.": "job.restarted",
+  "Stop requested; stopping at the next safe step": "job.stopping_safe",
+  "正在对齐多人站位…": "job.scene_aligning",
+  "等待对齐多人站位…": "job.scene_waiting",
+  "正在加载站位估计模型…": "job.scene_loading",
+  "动作已生成，可按原片对齐多人场景。": "job.scene_ready",
+  "首次运行，正在加载推理模型…": "job.model_loading",
+  "No selection - using default person": "job.default_person",
+  "Recovered from an earlier session; detailed progress is unavailable.": "server.job_details_unavailable",
+  "Failed": "job.failed",
+  "Done": "job.done",
+}));
+const COUNTERS = [
+  [/^SAM: (\d+)\/(\d+) frames$/, "job.sam_frames"],
+  [/^正在补提取手框 · (\d+) \/ (\d+) 帧$/, "job.hand_box_frames"],
+  [/^HaMeR 手指精修 · (\d+) \/ (\d+) 帧$/, "job.hamer_frames"],
+  [/^对齐多人站位 · (\d+)\/(\d+) 个素材帧$/, "job.scene_frames"],
+];
+
+function legacyMessage(value) {
+  if (!value) return "";
+  if (LEGACY.has(value)) return t(LEGACY.get(value));
+  for (const [pattern, key] of COUNTERS) {
+    const match = value.match(pattern);
+    if (match) return t(key, { current: match[1], total: match[2] });
+  }
+  const camera = value.match(/^(CPU 相机估计|省显存相机估计|相机估计) · 采样 (\d+)\/(\d+) 帧 · 间隔 (\d+)$/);
+  if (camera) return t("progress.camera_samples", {
+    mode: m({ "CPU 相机估计": "progress.camera_cpu", "省显存相机估计": "progress.camera_low", "相机估计": "stage.camera" }[camera[1]]),
+    samples: camera[2], frames: camera[3], interval: camera[4],
+  });
+  const detected = value.match(/^Found (\d+) person\(s\)$/);
+  if (detected) return t("job.detected_count", { count: detected[1] });
+  const chosen = value.match(/^已选择(?:(?:人物 (\d+))| (\d+) 人)$/);
+  if (chosen) return chosen[1] ? t("job.chosen_one", { number: chosen[1] }) : t("job.chosen_count", { count: chosen[2] });
+  return value;
+}
 
 export function initProgress() {
   const list = $("stageList");
 
   function renderStages(stages, now) {
-    list.innerHTML = "";
+    const rows = [];
     for (const s of stages) {
       const row = el("li", `stage ${s.status}`);
-      row.title = s.detail || "";
-      row.append(el("span", "stage-dot"), el("span", "stage-label", STAGE_LABEL[s.label] || s.label));
+      const key = s.label === "Static camera" ? "camera.static" : `stage.${s.name}`;
+      setAttr(row, "title", m(s.label === "Static camera" ? "stage.hint_static" : `stage.hint_${s.name}`, {}, s.detail || ""));
+      row.append(el("span", "stage-dot"), el("span", "stage-label", m(key, {}, s.label)));
       const bar = el("div", "stage-bar");
       const fill = el("div", "stage-fill");
       fill.style.width = `${s.status === "completed" ? 100 : s.progress}%`;
       bar.append(fill);
       row.append(bar);
       row.append(el("span", "stage-pct num", `${s.status === "completed" ? 100 : Math.round(s.progress)}%`));
-      let t = formatSeconds(s.elapsed_seconds);
-      if (s.start) t = formatSeconds(Math.max(0,
-        (s.end || s.paused_at || now) - s.start - (s.paused_seconds || 0)));
-      if (s.status === "waiting_user") t = "等待";
-      row.append(el("span", "stage-time num", t));
-      list.append(row);
+      let time = formatSeconds(s.elapsed_seconds);
+      if (s.start) time = formatSeconds(Math.max(0, (s.end || s.paused_at || now) - s.start - (s.paused_seconds || 0)));
+      row.append(el("span", "stage-time num", s.status === "waiting_user" ? m("job.waiting") : time));
+      rows.push(row);
     }
+    list.replaceChildren(...rows);
+  }
+
+  function jobMessage(job) {
+    if (job.status === "waiting_user") return t("job.choose_in_video");
+    if (job.status === "done") {
+      return [
+        t("progress.finished_frames", { frames: job.num_frames }),
+        job.person_count ? t("progress.finished_people", { done: job.person_done, total: job.person_count }) : "",
+        job.track_range ? t("timeline.source_span", { start: job.track_range[0] + 1, end: job.track_range[1] + 1 }) : "",
+        job.finished && job.started ? formatSeconds(job.finished - job.started) : "",
+      ].filter(Boolean).join(" · ");
+    }
+    const value = job.message_code
+      ? t(`job.${job.message_code}`, job.message_params, () => legacyMessage(job.message))
+      : legacyMessage(job.message);
+    return job.current_person ? [
+      t("person.number", { number: job.current_person }),
+      t("progress.finished_people", { done: job.person_done, total: job.person_count }), value,
+    ].filter(Boolean).join(" · ") : value;
+  }
+
+  function renderCamera(camera) {
+    const node = $("jobCamera");
+    setText(node, !camera ? "" : camera.mode === "static" ? m("camera.static") : m("progress.camera_samples", {
+      mode: m(camera.profile === "low_vram" ? "progress.camera_low" : camera.profile === "cpu" ? "progress.camera_cpu"
+        : camera.mode === "auto" ? "camera.auto" : "camera.manual"),
+      samples: camera.samples, frames: camera.frames, interval: camera.interval,
+    }));
+    show(node, !!camera);
+  }
+
+  function renderBatch(batch) {
+    const node = $("jobSamBatch");
+    if (batch) {
+      setText(node, () => [
+        "SAM",
+        t(batch.reused ? "progress.sam_reused" : batch.requested == null ? "common.auto" : "common.manual"),
+        batch.actual == null ? t("progress.sam_unrecorded") : t("progress.sam_actual", { frames: batch.actual }),
+        !batch.reused && batch.total_mib ? t("progress.vram_free", {
+          free: (batch.free_mib / 1024).toFixed(1), total: (batch.total_mib / 1024).toFixed(1),
+        }) : "",
+        batch.retries && !batch.reused ? t("progress.sam_retries", { count: batch.retries }) : "",
+      ].filter(Boolean).join(" · "));
+    }
+    show(node, !!batch);
+  }
+
+  function renderHamer(hamer) {
+    const node = $("jobHamer");
+    if (hamer) {
+      setText(node, hamer.left || hamer.right ? () => [
+        "HaMeR",
+        hamer.stride > 1 ? t("progress.hamer_stride", { stride: hamer.stride }) : hamer.stride === 1 ? t("hamer.every_frame") : "",
+        t("progress.hamer_hands", { left: hamer.left, right: hamer.right, frames: hamer.frames }),
+        formatSeconds(hamer.seconds),
+      ].filter(Boolean).join(" · ") : m("progress.hamer_untracked"));
+      setAttr(node, "title", hamer.stride > 1
+        ? m("progress.hamer_sampled", { left: hamer.sampled_left, right: hamer.sampled_right }) : "");
+    }
+    show(node, !!hamer);
+  }
+
+  function renderCorrection(correction, params) {
+    const node = $("jobCorrection");
+    const sole = correction?.sole_fit;
+    setText(node, correction ? () => [
+      t(correction.preset === "strong" ? "correction.lock_strong" : "correction.lock_normal"),
+      `${t(correction.automatic ? "correction.floor_auto" : "correction.floor_manual")} ${correction.floor_m.toFixed(3)} m`,
+      correction.contacts ? formatSeconds(correction.seconds) : t("progress.correction_no_contact"),
+      sole ? t(sole.adjusted ? "progress.correction_sole" : "progress.correction_sole_unchanged",
+        { strength: sole.strength ?? params?.sole_fit_strength ?? 0.6 }) : "",
+    ].filter(Boolean).join(" · ") : "");
+    setAttr(node, "title", correction?.warning || "");
+    show(node, !!correction);
+  }
+
+  function setBadge(status) {
+    const b = $("jobBadge");
+    setText(b, () => statusLabel(status));
+    b.className = `badge ${status}`;
   }
 
   return {
     showUploading(name, frac) {
-      show("jobCard", true);
-      show("btnRerun", false);
-      show("btnAlignScene", false);
-      show("btnSafeRerun", false);
-      show("btnStopRun", false);
-      $("jobName").textContent = name;
+      show("jobCard");
+      for (const id of ["btnRerun", "btnAlignScene", "btnSafeRerun", "btnStopRun", "queueBox",
+        "jobCamera", "jobSamBatch", "jobHamer", "jobCorrection", "jobError"]) show(id, false);
+      setText($("jobName"), name);
       setBadge("uploading");
-      show("queueBox", false);
-      show("jobCamera", false);
-      show("jobSamBatch", false);
-      show("jobHamer", false);
-      show("jobCorrection", false);
-      $("jobMsg").textContent = `正在导入 ${Math.round(frac * 100)}%`;
-      show("jobError", false);
+      setText($("jobMsg"), m("job.importing", { percent: Math.round(frac * 100) }));
     },
     render(job) {
-      show("jobCard", true);
+      show("jobCard");
       show("btnRerun", ["done", "failed", "cancelled", "needs_alignment"].includes(job.status));
       show("btnAlignScene", !!job.scene_needs_build);
       show("btnSafeRerun", ["failed", "cancelled"].includes(job.status) && !job.params.static_camera);
       const stop = $("btnStopRun");
       show(stop, ["queued", "running", "waiting_user", "cancel_requested"].includes(job.status));
       stop.disabled = job.status === "cancel_requested";
-      stop.textContent = job.status === "cancel_requested" ? "正在停止…" : "停止";
-      $("jobName").textContent = jobLabel(job);
+      setText(stop, m(stop.disabled ? "job.stopping" : "common.stop"));
+      setText($("jobName"), () => jobLabel(job));
       $("jobId").textContent = job.id;
       setBadge(job.status);
       const queued = job.status === "queued";
       show("queueBox", queued);
-      if (queued) {
-        $("queueText").textContent = job.queue_position > 0
-          ? `前面还有 ${job.queue_position} 个任务` : "即将开始";
-      }
+      if (queued) setText($("queueText"), job.queue_position > 0
+        ? m("progress.ahead", { count: job.queue_position }) : m("progress.starting_soon"));
       renderStages(job.stages, job.now);
-      let msg = MESSAGES[job.message] || job.message || "";
-      msg = msg.replace(/^SAM: (\d+)\/(\d+) frames$/, "SAM 特征提取 · $1 / $2 帧");
-      if (job.status === "waiting_user") msg = "请在视频编辑器中勾选要生成的人物";
-      if (job.status === "done") {
-        const total = job.finished && job.started ? ` · ${formatSeconds(job.finished - job.started)}` : "";
-        const range = job.track_range ? ` · 素材第 ${job.track_range[0] + 1}–${job.track_range[1] + 1} 帧` : "";
-        const people = job.person_count ? ` ${job.person_done}/${job.person_count} 人 · ` : " ";
-        msg = `已生成${people}${job.num_frames} 帧${range}${total}`;
-      } else if (job.current_person) {
-        msg = `人物 ${job.current_person} · 已完成 ${job.person_done}/${job.person_count} 人 · ${msg}`;
-      }
-      $("jobMsg").textContent = msg;
-      const camera = job.camera;
-      const cameraInfo = !camera ? "" : camera.mode === "static" ? "相机 · 固定机位"
-        : `相机 · ${camera.mode === "auto" ? "自动" : "手动"}${camera.profile === "low_vram" ? " · 省显存" : camera.profile === "cpu" ? " · CPU" : ""} · 采样 ${camera.samples}/${camera.frames} 帧 · 间隔 ${camera.interval}`;
-      $("jobCamera").textContent = cameraInfo;
-      show("jobCamera", !!cameraInfo);
-      const batch = job.sam_batch;
-      if (batch) {
-        const actual = batch.actual == null ? "批次未记录" : `实际 ${batch.actual} 帧`;
-        const memory = !batch.reused && batch.total_mib ? ` · 可用 ${(batch.free_mib / 1024).toFixed(1)} / ${(batch.total_mib / 1024).toFixed(1)} GiB` : "";
-        $("jobSamBatch").textContent = `SAM · ${batch.reused ? "复用特征" : batch.requested == null ? "自动" : "手动"} · ${actual}${memory}${batch.retries && !batch.reused ? ` · 已降档 ${batch.retries} 次` : ""}`;
-      }
-      show("jobSamBatch", !!batch);
-      const hamer = job.hamer_report;
-      if (hamer) {
-        const report = $("jobHamer");
-        const sampling = hamer.stride > 1 ? `每 ${hamer.stride} 帧采样 · ` : hamer.stride === 1 ? "逐帧 · " : "";
-        report.textContent = hamer.left || hamer.right
-          ? `HaMeR · ${sampling}左手 ${hamer.left}/${hamer.frames} 帧 · 右手 ${hamer.right}/${hamer.frames} 帧 · ${formatSeconds(hamer.seconds)}`
-          : "HaMeR · 无有效手框，已保留原手指动作";
-        report.title = hamer.stride > 1
-          ? `模型实际采样：左手 ${hamer.sampled_left} 帧，右手 ${hamer.sampled_right} 帧；其余有效帧由插值补齐。`
-          : "";
-      }
-      show("jobHamer", !!hamer);
-      const correction = job.correction;
-      const correctionStatus = $("jobCorrection");
-      const sole = correction?.sole_fit;
-      const soleStatus = sole ? ` · 脚掌贴地 ${sole.strength ?? job.params?.sole_fit_strength ?? 0.6}${sole.adjusted ? "" : "（未调整）"}` : "";
-      correctionStatus.textContent = correction
-        ? `${correction.preset === "strong" ? "加强锁脚" : "标准锁脚"} · ${correction.automatic ? "自动" : "手动"}地面 ${correction.floor_m.toFixed(3)} m · ${correction.contacts ? formatSeconds(correction.seconds) : "未识别到可锁定的支撑"}${soleStatus}`
-        : "";
-      correctionStatus.title = correction?.warning || "";
-      show(correctionStatus, !!correction);
-      $("workspaceState").textContent = job.status === "running" ? `${job.progress}% · ${msg}`
-        : job.status === "done" ? `${msg} · FlowHMR` : STATUS_LABEL[job.status] || job.status;
-      $("jobError").textContent = job.error || "";
-      show("jobError", job.status === "failed" && !!job.error);
+      setText($("jobMsg"), () => jobMessage(job));
+      renderCamera(job.camera);
+      renderBatch(job.sam_batch);
+      renderHamer(job.hamer_report);
+      renderCorrection(job.correction, job.params);
+      setText($("workspaceState"), () => job.status === "running" ? `${job.progress}% · ${jobMessage(job)}`
+        : job.status === "done" ? `${jobMessage(job)} · FlowHMR` : statusLabel(job.status));
+      const error = serverMessage(job.error_code, job.error_params, job.error);
+      setText($("jobError"), error);
+      setAttr($("jobError"), "title", job.error || "");
+      show("jobError", job.status === "failed" && !!localize(error));
     },
     showError(msg) {
-      show("jobCard", true);
-      show("btnRerun", false);
-      show("btnAlignScene", false);
-      show("btnSafeRerun", false);
-      show("btnStopRun", false);
-      show("jobCamera", false);
-      show("jobSamBatch", false);
-      show("jobHamer", false);
-      show("jobCorrection", false);
+      show("jobCard");
+      for (const id of ["btnRerun", "btnAlignScene", "btnSafeRerun", "btnStopRun",
+        "jobCamera", "jobSamBatch", "jobHamer", "jobCorrection"]) show(id, false);
       setBadge("failed");
-      $("jobError").textContent = msg;
-      show("jobError", true);
+      setText($("jobError"), msg);
+      setAttr($("jobError"), "title", "");
+      show("jobError");
     },
     showActionError(msg) {
-      show("jobCard", true);
-      $("jobError").textContent = msg;
-      show("jobError", true);
+      show("jobCard");
+      setText($("jobError"), msg);
+      setAttr($("jobError"), "title", "");
+      show("jobError");
     },
   };
-
-  function setBadge(status) {
-    const b = $("jobBadge");
-    b.textContent = STATUS_LABEL[status] || status;
-    b.className = `badge ${status}`;
-  }
 }

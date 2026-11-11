@@ -19,34 +19,43 @@
     <div class="brand">
       <span class="logo">FlowHMR</span>
       <details class="editor-menu">
-        <summary>文件</summary>
+        <summary data-i18n="menu.file">文件</summary>
         <div class="editor-menu-popup">
-          <button type="button" id="menuImport">导入视频…</button>
-          <button type="button" id="menuFbx" disabled>导出 FBX…</button>
-          <button type="button" id="menuNpz" disabled>导出 NPZ…</button>
+          <button type="button" id="menuImport" data-i18n="menu.import">导入视频…</button>
+          <button type="button" id="menuFbx" disabled data-i18n="menu.export_fbx">导出 FBX…</button>
+          <button type="button" id="menuNpz" disabled data-i18n="menu.export_npz">导出 NPZ…</button>
         </div>
       </details>
-      <span class="workspace-tab">布局</span>
+      <span class="workspace-tab" data-i18n="menu.layout">布局</span>
     </div>
     <div class="topbar-actions">
-      <div class="theme-options" id="themeOptions" role="group" aria-label="Color theme">
-        <button type="button" class="theme-option" data-theme-choice="light" title="Light mode" aria-label="Light mode" aria-pressed="false">
+      <select id="languageSelect" class="input language-select" aria-label="界面语言" data-i18n-label="menu.language" data-i18n-title="menu.language">
+        <option value="zh-CN" lang="zh-CN">简体中文</option>
+        <option value="zh-TW" lang="zh-TW">繁體中文</option>
+        <option value="en" lang="en">English</option>
+        <option value="ja" lang="ja">日本語</option>
+        <option value="ko" lang="ko">한국어</option>
+        <option value="ru" lang="ru">Русский</option>
+        <option value="fr" lang="fr">Français</option>
+      </select>
+      <div class="theme-options" id="themeOptions" role="group" aria-label="Color theme" data-i18n-label="theme.label">
+        <button type="button" class="theme-option" data-theme-choice="light" title="Light mode" aria-label="Light mode" aria-pressed="false" data-i18n-title="theme.light" data-i18n-label="theme.light">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>
         </button>
-        <button type="button" class="theme-option" data-theme-choice="dark" title="Dark mode" aria-label="Dark mode" aria-pressed="false">
+        <button type="button" class="theme-option" data-theme-choice="dark" title="Dark mode" aria-label="Dark mode" aria-pressed="false" data-i18n-title="theme.dark" data-i18n-label="theme.dark">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"/></svg>
         </button>
-        <button type="button" class="theme-option" data-theme-choice="system" title="Follow system" aria-label="Follow system" aria-pressed="true">
+        <button type="button" class="theme-option" data-theme-choice="system" title="Follow system" aria-label="Follow system" aria-pressed="true" data-i18n-title="theme.system" data-i18n-label="theme.system">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
         </button>
       </div>
-      <button type="button" class="model-info model-button" id="btnModels" aria-haspopup="dialog" title="检查模型文件">
+      <button type="button" class="model-info model-button" id="btnModels" aria-haspopup="dialog" title="检查模型文件" data-i18n-title="models.check_tooltip">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m8 2 5 2.8v6.4L8 14l-5-2.8V4.8L8 2Zm-5 2.8 5 2.9 5-2.9M8 7.7V14"/></svg>
-        模型 <span id="modelInfo">正在连接</span>
+        <span data-i18n="models.short">模型</span> <span id="modelInfo" data-i18n="connection.connecting">正在连接</span>
       </button>
-      <button type="button" class="model-info model-button hidden" id="btnRuntime" aria-haspopup="dialog" title="下载或切换 CUDA 运行环境">
+      <button type="button" class="model-info model-button hidden" id="btnRuntime" aria-haspopup="dialog" title="下载或切换运行环境" data-i18n-title="runtime.manage">
         <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 1v2m4-2v2M6 13v2m4-2v2M1 6h2m-2 4h2m10-4h2m-2 4h2"/></svg>
-        运行环境 <span id="runtimeInfo"></span>
+        <span data-i18n="runtime.title">运行环境</span> <span id="runtimeInfo"></span>
       </button>
     </div>
   </div>
@@ -54,20 +63,20 @@
 
 <main class="workspace">
   <!-- ============================================================ left: input & controls -->
-  <aside class="sidebar source-editor" aria-label="视频编辑器">
+  <aside class="sidebar source-editor" aria-label="视频编辑器" data-i18n-label="source.title">
     <!-- Video: upload + preview with person boxes -->
     <section class="card">
       <div class="card-head">
-        <h3 class="card-title editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="m7 6 3 2-3 2z"/></svg>视频编辑器</h3>
+        <h3 class="card-title editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="m7 6 3 2-3 2z"/></svg><span data-i18n="source.title">视频编辑器</span></h3>
         <span class="preview-title" id="previewTitle"></span>
       </div>
-      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择视频">
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择视频" data-i18n-label="source.choose">
         <input type="file" id="fileInput" accept="video/*" hidden>
         <svg viewBox="0 0 24 24" class="drop-icon" aria-hidden="true">
           <path d="M7 16a4 4 0 01-.88-7.9A5 5 0 1115.9 6H16a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
                 fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <p class="drop-title">拖入视频，或点击选择</p>
+        <p class="drop-title" data-i18n="source.drop">拖入视频，或点击选择</p>
         <p class="drop-sub" id="uploadHint">MP4, MOV, AVI, MKV, WebM</p>
       </div>
       <div class="file-row hidden" id="fileRow">
@@ -75,11 +84,11 @@
           <span class="file-name" id="fileName"></span>
           <span class="file-size" id="fileSize"></span>
         </div>
-        <button type="button" class="link-btn danger" id="fileRemove">移除</button>
+        <button type="button" class="link-btn danger" id="fileRemove" data-i18n="source.remove">移除</button>
       </div>
       <p class="error hidden" id="uploadError"></p>
       <div class="preview-stage hidden" id="previewBox">
-        <video id="previewVideo" playsinline preload="auto" tabindex="0" aria-label="原视频预览"></video>
+        <video id="previewVideo" playsinline preload="auto" tabindex="0" aria-label="原视频预览" data-i18n-label="source.preview"></video>
         <canvas id="previewCanvas"></canvas>
       </div>
       <p class="card-help hidden" id="previewIssue" role="status"></p>
@@ -87,159 +96,160 @@
 
     <!-- Person selection (only while a job waits for it) -->
     <section class="card hidden" id="personCard">
-      <h3 class="card-title" id="personTitle">选择人物</h3>
+      <h3 class="card-title" id="personTitle" data-i18n="person.choose">选择人物</h3>
       <p class="card-help" id="personCount"></p>
       <div class="person-list" id="personList"></div>
-      <button type="button" class="btn-primary block" id="personConfirm" disabled>请勾选人物</button>
+      <button type="button" class="btn-primary block" id="personConfirm" disabled data-i18n="person.check">请勾选人物</button>
       <p class="error hidden" id="personError"></p>
       <button type="button" class="btn-secondary block rerun-btn hidden" id="personReselect"
-              title="重新检测并选择人物">更换人物</button>
+              title="重新检测并选择人物" data-i18n-title="person.reselect_hint" data-i18n="person.reselect">更换人物</button>
     </section>
 
   </aside>
 
-  <aside class="sidebar properties-editor" aria-label="任务历史与属性">
+  <aside class="sidebar properties-editor" aria-label="任务历史与属性" data-i18n-label="history.properties">
     <section class="card outliner-editor">
       <div class="card-head">
-        <h3 class="card-title editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3v10m0-9h3M3 8h3m-3 4h3m2-8h6M8 8h6m-6 4h6"/></svg>任务历史 <span id="historySummary"></span></h3>
-        <button type="button" class="icon-btn" id="historyRefresh" title="刷新" aria-label="刷新生成历史">
+        <h3 class="card-title editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3v10m0-9h3M3 8h3m-3 4h3m2-8h6M8 8h6m-6 4h6"/></svg><span data-i18n="history.title">任务历史</span> <span id="historySummary"></span></h3>
+        <button type="button" class="icon-btn" id="historyRefresh" title="刷新" aria-label="刷新生成历史" data-i18n-title="common.refresh" data-i18n-label="history.refresh">
           <svg viewBox="0 0 24 24"><path d="M16.02 9.35h4.99M2.98 19.64v-4.99m0 0h4.99m-4.99 0l3.18 3.18a8.25 8.25 0 0013.8-3.7M4.03 9.87a8.25 8.25 0 0113.8-3.7l3.18 3.18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>
       <div class="history-scroll">
         <p class="error hidden" id="historyError"></p>
-        <p class="empty-note" id="historyEmpty">暂无生成记录</p>
+        <p class="empty-note" id="historyEmpty" data-i18n="history.empty">暂无生成记录</p>
         <div class="runs" id="historyList"></div>
+        <button type="button" class="btn-secondary small history-more hidden" id="historyMore" data-i18n="history.more">加载更多</button>
       </div>
       <div class="history-actions">
-        <button type="button" class="btn-secondary small" id="historyDeleteSelected" disabled>删除所选 <span id="historySelectedCount">0</span></button>
-        <button type="button" class="link-btn danger" id="historyDeleteAll" disabled>清空历史</button>
+        <button type="button" class="btn-secondary small" id="historyDeleteSelected" disabled><span data-i18n="history.delete_selected">删除所选</span> <span id="historySelectedCount">0</span></button>
+        <button type="button" class="link-btn danger" id="historyDeleteAll" disabled data-i18n="history.clear">清空历史</button>
       </div>
     </section>
-    <div class="editor-splitter splitter-history" data-split="history" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="调整任务历史高度" title="拖动调整任务历史高度，双击恢复"></div>
+    <div class="editor-splitter splitter-history" data-split="history" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="调整任务历史高度" title="拖动调整任务历史高度，双击恢复" data-i18n-label="layout.history" data-i18n-title="layout.history_hint"></div>
     <div class="property-content">
     <!-- Settings -->
     <section class="card property-sheet">
-      <div class="card-head"><h3 class="card-title editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12M5 2v4m6 0v4m-5 0v4"/></svg>属性 <span>›</span> 动作生成</h3>
-        <button type="button" class="btn-secondary small" id="btnDefaults" title="将生成参数恢复为本机默认值">恢复默认</button>
+      <div class="card-head"><h3 class="card-title editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12M5 2v4m6 0v4m-5 0v4"/></svg><span data-i18n="settings.properties">属性</span> <span>›</span> <span data-i18n="settings.generation">动作生成</span></h3>
+        <button type="button" class="btn-secondary small" id="btnDefaults" title="将生成参数恢复为本机默认值" data-i18n-title="settings.reset_hint" data-i18n="settings.reset">恢复默认</button>
       </div>
       <div class="field-grid core-settings">
-        <label class="field" title="引导强度（CFG）">
-          <span>引导强度</span>
+        <label class="field" title="引导强度（CFG）" data-i18n-title="settings.cfg_hint">
+          <span data-i18n="settings.cfg">引导强度</span>
           <input class="input" id="optCfg" type="number" min="0" max="10" step="0.1" value="1.0">
         </label>
-        <label class="field" title="ODE 步数">
-          <span>步数</span>
+        <label class="field" title="ODE 步数" data-i18n-title="settings.ode_hint">
+          <span data-i18n="settings.steps">步数</span>
           <input class="input" id="optSteps" type="number" min="1" max="100" step="1" value="20">
         </label>
-        <label class="field" title="随机种子">
-          <span>种子</span>
+        <label class="field" title="随机种子" data-i18n-title="settings.seed_hint">
+          <span data-i18n="settings.seed">种子</span>
           <input class="input" id="optSeed" type="number" min="0" max="2147483647" step="1" value="0">
         </label>
       </div>
       <hr class="property-divider">
       <label class="field camera-mode">
-        <span>相机模式</span>
+        <span data-i18n="camera.mode">相机模式</span>
         <select class="input" id="optCameraMode" aria-describedby="cameraHint">
-          <option value="static" selected>固定机位</option>
-          <option value="auto">运动相机 · 自动</option>
-          <option value="manual">运动相机 · 手动采样</option>
+          <option value="static" selected data-i18n="camera.static">固定机位</option>
+          <option value="auto" data-i18n="camera.auto">运动相机 · 自动</option>
+          <option value="manual" data-i18n="camera.manual">运动相机 · 手动采样</option>
         </select>
       </label>
       <label class="field camera-mode hidden" id="manualCameraRow">
-        <span>每 N 帧估计一次相机</span>
+        <span data-i18n="camera.interval">每 N 帧估计一次相机</span>
         <input class="input" id="optVggt" type="number" min="1" max="120" step="1" value="10">
       </label>
-      <p class="setting-help" id="cameraHint">仅平移、推拉或缩放通常选固定机位。镜头明显转向、俯仰或滚转时，选运动相机。</p>
+      <p class="setting-help" id="cameraHint" data-i18n="camera.static_hint">仅平移、推拉或缩放通常选固定机位。镜头明显转向、俯仰或滚转时，选运动相机。</p>
       <div class="setting-row person-setting">
         <div>
-          <div class="setting-label">手动选人</div>
-          <div class="setting-help">检测到多人时暂停，可勾选一人或多人</div>
+          <div class="setting-label" data-i18n="person.manual">手动选人</div>
+          <div class="setting-help" data-i18n="person.manual_hint">检测到多人时暂停，可勾选一人或多人</div>
         </div>
-        <button type="button" class="toggle" id="optManual" role="switch" aria-label="手动选人" aria-checked="true"><span class="toggle-knob"></span></button>
+        <button type="button" class="toggle" id="optManual" role="switch" aria-label="手动选人" aria-checked="true" data-i18n-label="person.manual"><span class="toggle-knob"></span></button>
       </div>
       <p class="setting-help" id="rangeSummary"></p>
-      <button type="button" class="btn-primary block run-btn" id="btnSubmit" disabled>生成 3D 动作</button>
+      <button type="button" class="btn-primary block run-btn" id="btnSubmit" disabled data-i18n="settings.generate">生成 3D 动作</button>
       <div class="generation-options">
         <div class="field camera-mode slider-field">
-          <label for="optSmoothing">滤波强度</label>
+          <label for="optSmoothing" data-i18n="settings.smoothing">滤波强度</label>
           <div class="slider-control">
             <input id="optSmoothing" type="range" min="0" max="1" step="0.01" value="0" aria-describedby="smoothingHint">
-            <input class="input" id="optSmoothingValue" type="number" min="0" max="1" step="any" value="0" aria-label="精确输入滤波强度" aria-describedby="smoothingHint">
+            <input class="input" id="optSmoothingValue" type="number" min="0" max="1" step="any" value="0" aria-label="精确输入滤波强度" aria-describedby="smoothingHint" data-i18n-label="settings.smoothing_value">
           </div>
-          <span class="setting-help" id="smoothingHint">0 为关闭；1 对应 3 帧。</span>
+          <span class="setting-help" id="smoothingHint" data-i18n="settings.smoothing_default_hint">0 为关闭；1 对应 3 帧。</span>
         </div>
         <hr class="property-divider">
-        <div class="setting-row" title="裁剪手部画面，估计并平滑手指旋转。保留 FlowHMR 的身体、手腕和整体轨迹。缺少有效手框的帧保留原动作。">
+        <div class="setting-row" title="裁剪手部画面，估计并平滑手指旋转。保留 FlowHMR 的身体、手腕和整体轨迹。缺少有效手框的帧保留原动作。" data-i18n-title="hamer.tooltip">
           <div>
-            <div class="setting-label">HaMeR 手指精修</div>
-            <div class="setting-help" id="hamerHint">精修手指 · 生成耗时增加</div>
+            <div class="setting-label" data-i18n="hamer.title">HaMeR 手指精修</div>
+            <div class="setting-help" id="hamerHint" data-i18n="hamer.hint">精修手指 · 生成耗时增加</div>
           </div>
-          <button type="button" class="toggle" id="optHamer" role="switch" aria-label="HaMeR 手指精修" aria-checked="false" aria-describedby="hamerHint"><span class="toggle-knob"></span></button>
+          <button type="button" class="toggle" id="optHamer" role="switch" aria-label="HaMeR 手指精修" aria-checked="false" aria-describedby="hamerHint" data-i18n-label="hamer.title"><span class="toggle-knob"></span></button>
         </div>
         <label class="field camera-mode hidden" id="hamerSamplingRow">
-          <span>手指采样间隔</span>
+          <span data-i18n="hamer.stride">手指采样间隔</span>
           <select class="input" id="optHamerStride" aria-describedby="hamerSamplingHint">
-            <option value="1">逐帧</option>
-            <option value="2">每 2 帧</option>
-            <option value="3">每 3 帧</option>
-            <option value="4">每 4 帧</option>
+            <option value="1" data-i18n="hamer.every_frame">逐帧</option>
+            <option value="2" data-i18n="hamer.every_two">每 2 帧</option>
+            <option value="3" data-i18n="hamer.every_three">每 3 帧</option>
+            <option value="4" data-i18n="hamer.every_four">每 4 帧</option>
           </select>
-          <span class="setting-help" id="hamerSamplingHint">间隔帧用插值补齐；间隔越大，越容易漏掉快速手势。</span>
+          <span class="setting-help" id="hamerSamplingHint" data-i18n="hamer.stride_hint">间隔帧用插值补齐；间隔越大，越容易漏掉快速手势。</span>
         </label>
         <hr class="property-divider">
         <div class="setting-row">
           <div>
-            <div class="setting-label">接触修正</div>
-            <div class="setting-help" id="postprocessHint">稳定落脚，减轻脚滑</div>
+            <div class="setting-label" data-i18n="correction.title">接触修正</div>
+            <div class="setting-help" id="postprocessHint" data-i18n="correction.hint">稳定落脚，减轻脚滑</div>
           </div>
-          <button type="button" class="toggle" id="optPostprocess" role="switch" aria-label="接触修正" aria-checked="false"><span class="toggle-knob"></span></button>
+          <button type="button" class="toggle" id="optPostprocess" role="switch" aria-label="接触修正" aria-checked="false" data-i18n-label="correction.title"><span class="toggle-knob"></span></button>
         </div>
         <label class="field camera-mode hidden" id="footLockRow">
-          <span>脚步锁定</span>
+          <span data-i18n="correction.lock">脚步锁定</span>
           <select class="input" id="optFootLockPreset" aria-describedby="footLockHint">
-            <option value="normal">标准</option>
-            <option value="strong">加强</option>
+            <option value="normal" data-i18n="correction.normal">标准</option>
+            <option value="strong" data-i18n="correction.strong">加强</option>
           </select>
           <span class="setting-help" id="footLockHint"></span>
         </label>
         <div class="field camera-mode slider-field hidden" id="soleFitRow">
-          <label for="optSoleFitStrength">脚掌贴地强度</label>
+          <label for="optSoleFitStrength" data-i18n="correction.sole">脚掌贴地强度</label>
           <div class="slider-control">
             <input id="optSoleFitStrength" type="range" min="0" max="1" step="0.01" value="0" aria-describedby="soleFitHint">
-            <input class="input" id="optSoleFitValue" type="number" min="0" max="1" step="0.01" value="0" aria-label="精确输入脚掌贴地强度">
+            <input class="input" id="optSoleFitValue" type="number" min="0" max="1" step="0.01" value="0" aria-label="精确输入脚掌贴地强度" data-i18n-label="correction.sole_value">
           </div>
-          <span class="setting-help" id="soleFitHint">0 为关闭；0.6 为适中效果。</span>
+          <span class="setting-help" id="soleFitHint" data-i18n="correction.sole_hint">0 为关闭；0.6 为适中效果。</span>
         </div>
         <label class="field camera-mode hidden" id="correctionFloorRow">
-          <span>修正用地面</span>
+          <span data-i18n="correction.ground">修正用地面</span>
           <select class="input" id="optCorrectionGround">
-            <option value="auto">自动估计</option>
-            <option value="manual">手动指定高度</option>
+            <option value="auto" data-i18n="correction.auto">自动估计</option>
+            <option value="manual" data-i18n="correction.manual">手动指定高度</option>
           </select>
         </label>
         <label class="field camera-mode hidden" id="correctionHeightRow">
-          <span>修正高度（米）</span>
+          <span data-i18n="correction.height">修正高度（米）</span>
           <input class="input" id="optCorrectionHeight" type="number" step="0.01" value="0">
-          <span class="setting-help">会用于下一次生成和导出。</span>
+          <span class="setting-help" data-i18n="correction.height_hint">会用于下一次生成和导出。</span>
         </label>
         <hr class="property-divider">
         <div class="setting-row">
           <div>
-            <div class="setting-label">自动选择 SAM 批次</div>
-            <div class="setting-help" id="samChunkHelp">按任务开始时的可用显存估计</div>
+            <div class="setting-label" data-i18n="sam.auto">自动选择 SAM 批次</div>
+            <div class="setting-help" id="samChunkHelp" data-i18n="sam.memory_hint">按任务开始时的可用显存估计</div>
           </div>
-          <button type="button" class="toggle" id="optSamAuto" role="switch" aria-label="自动选择 SAM 批次" aria-checked="true"><span class="toggle-knob"></span></button>
+          <button type="button" class="toggle" id="optSamAuto" role="switch" aria-label="自动选择 SAM 批次" aria-checked="true" data-i18n-label="sam.auto"><span class="toggle-knob"></span></button>
         </div>
         <div class="field-grid hidden" id="samChunkRow">
           <label class="field">
-            <span>SAM 批次帧数</span>
+            <span data-i18n="sam.batch">SAM 批次帧数</span>
             <input class="input" id="optSamChunk" type="number" min="1" step="1" value="16"
                    aria-describedby="samChunkHelp"
-                   title="手部批次为此值的两倍。显存不足时调低。">
+                   title="手部批次为此值的两倍。显存不足时调低。" data-i18n-title="sam.batch_hint">
           </label>
         </div>
-        <p class="setting-help settings-note">
+        <p class="setting-help settings-note" data-i18n="sam.setting_note">
           手动批次可按显存调整。处理起止帧在底部时间轴设置。
         </p>
       </div>
@@ -248,11 +258,11 @@
     <!-- Pipeline -->
     <section class="card hidden" id="jobCard">
       <div class="card-head">
-        <h3 class="card-title">任务进度</h3>
+        <h3 class="card-title" data-i18n="progress.title">任务进度</h3>
         <div class="job-actions">
           <span class="badge" id="jobBadge">queued</span>
           <button type="button" class="btn-secondary small hidden" id="btnStopRun"
-                  title="在当前阶段的检查点停止任务">停止</button>
+                  title="在当前阶段的检查点停止任务" data-i18n-title="progress.stop_hint" data-i18n="common.stop">停止</button>
         </div>
       </div>
       <div class="job-line">
@@ -262,7 +272,7 @@
       <div class="queue-box hidden" id="queueBox">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <div>
-          <div class="queue-title">正在排队</div>
+          <div class="queue-title" data-i18n="progress.queue">正在排队</div>
           <div class="queue-text" id="queueText"></div>
         </div>
       </div>
@@ -273,11 +283,11 @@
       <p class="setting-help hidden" id="jobHamer"></p>
       <p class="setting-help hidden" id="jobCorrection"></p>
       <p class="error hidden" id="jobError"></p>
-      <button type="button" class="btn-primary block rerun-btn hidden" id="btnAlignScene">对齐场景</button>
+      <button type="button" class="btn-primary block rerun-btn hidden" id="btnAlignScene" data-i18n="progress.align">对齐场景</button>
       <button type="button" class="btn-secondary block rerun-btn hidden" id="btnRerun"
-              title="用当前设置再生成一轮">用当前设置重跑</button>
+              title="用当前设置再生成一轮" data-i18n-title="progress.rerun_hint" data-i18n="progress.rerun">用当前设置重跑</button>
       <button type="button" class="btn-primary block rerun-btn hidden" id="btnSafeRerun"
-              title="使用自动相机采样重跑，复用可用的检测缓存">用自动相机重跑</button>
+              title="使用自动相机采样重跑，复用可用的检测缓存" data-i18n-title="progress.safe_rerun_hint" data-i18n="progress.safe_rerun">用自动相机重跑</button>
     </section>
     </div>
   </aside>
@@ -286,43 +296,43 @@
   <section class="card viewer-card" id="resultCard">
     <div class="card-head viewport-header">
       <div class="viewport-menus">
-        <span class="editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m8 1.5 5.5 3v7L8 14.5l-5.5-3v-7zM8 8l5.5-3.5M8 8 2.5 4.5M8 8v6.5"/></svg><span class="sr-only">3D 视图</span></span>
-        <span class="mode-label" id="viewportMode">实体预览</span>
+        <span class="editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m8 1.5 5.5 3v7L8 14.5l-5.5-3v-7zM8 8l5.5-3.5M8 8 2.5 4.5M8 8v6.5"/></svg><span class="sr-only" data-i18n="view.title">3D 视图</span></span>
+        <span class="mode-label" id="viewportMode" data-i18n="view.solid">实体预览</span>
         <details class="editor-menu">
-          <summary>视图</summary>
+          <summary data-i18n="view.menu">视图</summary>
           <div class="editor-menu-popup">
-            <button type="button" data-view="front">前视 <kbd>小键盘 1</kbd></button>
-            <button type="button" data-view="right">右视 <kbd>小键盘 3</kbd></button>
-            <button type="button" data-view="top">顶视 <kbd>小键盘 7</kbd></button>
-            <button type="button" id="toggleProjection">透视 / 正交 <kbd>小键盘 5</kbd></button>
+            <button type="button" data-view="front"><span data-i18n="view.front">前视</span> <kbd data-i18n="view.key_one">小键盘 1</kbd></button>
+            <button type="button" data-view="right"><span data-i18n="view.right">右视</span> <kbd data-i18n="view.key_three">小键盘 3</kbd></button>
+            <button type="button" data-view="top"><span data-i18n="view.top">顶视</span> <kbd data-i18n="view.key_seven">小键盘 7</kbd></button>
+            <button type="button" id="toggleProjection"><span data-i18n="view.projection">透视 / 正交</span> <kbd data-i18n="view.key_five">小键盘 5</kbd></button>
           </div>
         </details>
         <details class="editor-menu ground-menu hidden" id="groundMenu">
-          <summary>地面</summary>
+          <summary data-i18n="view.ground">地面</summary>
           <div class="editor-menu-popup ground-popup">
-            <label class="ground-auto"><input type="checkbox" id="optGroundAuto" checked> 自动对齐地面</label>
-            <label class="field"><span>网格高度（米）</span>
+            <label class="ground-auto"><input type="checkbox" id="optGroundAuto" checked> <span data-i18n="view.ground_auto">自动对齐地面</span></label>
+            <label class="field"><span data-i18n="view.ground_height">网格高度（米）</span>
               <input class="input" id="groundHeight" type="number" step="0.01" value="0" disabled>
             </label>
-            <p class="setting-help" id="groundSource">正在估计地面…</p>
-            <p class="setting-help">只移动预览网格，不改动作。</p>
+            <p class="setting-help" id="groundSource" data-i18n="view.ground_pending">正在估计地面…</p>
+            <p class="setting-help" data-i18n="view.ground_hint">只移动预览网格，不改动作。</p>
           </div>
         </details>
-        <label class="body-variant hidden" id="bodyVariantRow" title="切换预览和带蒙皮 FBX 的体型，保留动作骨架">
-          <span>体型</span>
-          <select class="input" id="bodyVariant" aria-label="SMPL-H 体型">
-            <option value="neutral">中性</option>
-            <option value="female">女性</option>
-            <option value="male">男性</option>
+        <label class="body-variant hidden" id="bodyVariantRow" title="切换预览和带蒙皮 FBX 的体型，保留动作骨架" data-i18n-title="view.body_hint">
+          <span data-i18n="view.body">体型</span>
+          <select class="input" id="bodyVariant" aria-label="SMPL-H 体型" data-i18n-label="view.smpl_body">
+            <option value="neutral" data-i18n="view.neutral">中性</option>
+            <option value="female" data-i18n="view.female">女性</option>
+            <option value="male" data-i18n="view.male">男性</option>
           </select>
         </label>
         <span class="result-info" id="resultInfo"></span>
       </div>
       <div class="downloads">
-        <button type="button" class="editor-icon" id="toggleGrid" aria-pressed="true" aria-label="显示地面网格" title="显示地面网格"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h12v12H2zM6 2v12m4-12v12M2 6h12M2 10h12"/></svg></button>
-        <button type="button" class="editor-icon" id="toggleWire" aria-pressed="false" aria-label="线框显示" title="线框显示"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.5" ry="6"/><path d="M2 8h12"/></svg></button>
+        <button type="button" class="editor-icon" id="toggleGrid" aria-pressed="true" aria-label="显示地面网格" title="显示地面网格" data-i18n-label="view.grid" data-i18n-title="view.grid"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h12v12H2zM6 2v12m4-12v12M2 6h12M2 10h12"/></svg></button>
+        <button type="button" class="editor-icon" id="toggleWire" aria-pressed="false" aria-label="线框显示" title="线框显示" data-i18n-label="view.wire" data-i18n-title="view.wire"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.5" ry="6"/><path d="M2 8h12"/></svg></button>
         <button type="button" class="btn-secondary small hidden" id="dlFbx" disabled>FBX</button>
-        <a class="btn-primary small hidden" id="dlNpz" href="#" download title="SMPL-H motion: poses (T,52,3), trans (T,3), betas">
+        <a class="btn-primary small hidden" id="dlNpz" href="#" download title="SMPL-H motion: poses (T,52,3), trans (T,3), betas" data-i18n-title="export.npz_hint">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           NPZ
         </a>
@@ -330,47 +340,47 @@
     </div>
     <div class="viewer-wrap">
       <div id="viewer"></div>
-      <div class="viewport-label"><strong id="viewportName">用户透视</strong><span id="viewportObject">场景集合</span></div>
-      <div class="viewport-toolbar" aria-label="视窗工具">
-        <button type="button" class="editor-icon" data-mouse-mode="rotate" aria-pressed="false" aria-label="旋转视图" title="左键旋转，中键平移"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 6.5A6.4 6.4 0 1 0 16 12M15.5 2.5v4h-4"/></svg></button>
-        <button type="button" class="editor-icon" data-mouse-mode="pan" aria-pressed="true" aria-label="平移视图" title="左键平移，中键和右键旋转"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2v16M2 10h16M7.5 4.5 10 2l2.5 2.5m-5 11 2.5 2.5 2.5-2.5M4.5 7.5 2 10l2.5 2.5m11-5L18 10l-2.5 2.5"/></svg></button>
-        <button type="button" class="editor-icon" id="btnReset" aria-label="居中显示" title="居中显示（Home）"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 4H4v4m8-4h4v4M4 12v4h4m8-4v4h-4"/><circle cx="10" cy="10" r="2"/></svg></button>
+      <div class="viewport-label"><strong id="viewportName" data-i18n="view.user_perspective">用户透视</strong><span id="viewportObject" data-i18n="view.scene">场景集合</span></div>
+      <div class="viewport-toolbar" aria-label="视窗工具" data-i18n-label="view.tools">
+        <button type="button" class="editor-icon" data-mouse-mode="rotate" aria-pressed="false" aria-label="旋转视图" title="左键旋转，中键平移" data-i18n-label="view.rotate" data-i18n-title="view.rotate_hint"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 6.5A6.4 6.4 0 1 0 16 12M15.5 2.5v4h-4"/></svg></button>
+        <button type="button" class="editor-icon" data-mouse-mode="pan" aria-pressed="true" aria-label="平移视图" title="左键平移，中键和右键旋转" data-i18n-label="view.pan" data-i18n-title="view.pan_hint"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2v16M2 10h16M7.5 4.5 10 2l2.5 2.5m-5 11 2.5 2.5 2.5-2.5M4.5 7.5 2 10l2.5 2.5m11-5L18 10l-2.5 2.5"/></svg></button>
+        <button type="button" class="editor-icon" id="btnReset" aria-label="居中显示" title="居中显示（Home）" data-i18n-label="view.center" data-i18n-title="view.center_hint"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 4H4v4m8-4h4v4M4 12v4h4m8-4v4h-4"/><circle cx="10" cy="10" r="2"/></svg></button>
       </div>
-      <div class="view-gizmo" id="viewGizmo" aria-label="坐标轴视角">
+      <div class="view-gizmo" id="viewGizmo" aria-label="坐标轴视角" data-i18n-label="view.axes">
         <svg viewBox="0 0 92 92" aria-hidden="true"><line class="gizmo-x" x1="46" y1="46"/><line class="gizmo-y" x1="46" y1="46"/><line class="gizmo-z" x1="46" y1="46"/></svg>
-        <button type="button" class="gizmo-x" data-view="right" title="右视" aria-label="右视">X</button>
-        <button type="button" class="gizmo-y" data-view="back" title="后视" aria-label="后视">Y</button>
-        <button type="button" class="gizmo-z" data-view="top" title="顶视" aria-label="顶视">Z</button>
-        <button type="button" class="gizmo-x opposite" data-view="left" title="左视" aria-label="左视"></button>
-        <button type="button" class="gizmo-y opposite" data-view="front" title="前视" aria-label="前视"></button>
-        <button type="button" class="gizmo-z opposite" data-view="bottom" title="底视" aria-label="底视"></button>
+        <button type="button" class="gizmo-x" data-view="right" title="右视" aria-label="右视" data-i18n-title="view.right" data-i18n-label="view.right">X</button>
+        <button type="button" class="gizmo-y" data-view="back" title="后视" aria-label="后视" data-i18n-title="view.back" data-i18n-label="view.back">Y</button>
+        <button type="button" class="gizmo-z" data-view="top" title="顶视" aria-label="顶视" data-i18n-title="view.top" data-i18n-label="view.top">Z</button>
+        <button type="button" class="gizmo-x opposite" data-view="left" title="左视" aria-label="左视" data-i18n-title="view.left" data-i18n-label="view.left"></button>
+        <button type="button" class="gizmo-y opposite" data-view="front" title="前视" aria-label="前视" data-i18n-title="view.front" data-i18n-label="view.front"></button>
+        <button type="button" class="gizmo-z opposite" data-view="bottom" title="底视" aria-label="底视" data-i18n-title="view.bottom" data-i18n-label="view.bottom"></button>
       </div>
-      <div class="viewer-empty" id="viewerEmpty">导入视频后，点击「生成 3D 动作」</div>
+      <div class="viewer-empty" id="viewerEmpty" data-i18n="view.empty">导入视频后，点击「生成 3D 动作」</div>
       <div class="viewer-tools hidden" id="viewerTools">
-        <label title="在模型表面叠加 SMPL-H 骨架和关节"><input type="checkbox" id="optSkeleton" checked disabled> 骨架</label>
-        <label title="用 Blender 风格的八面体显示骨骼"><input type="checkbox" id="optBoneCones" disabled> 锥体骨骼</label>
-        <label title="勾选显示人物表面，取消勾选只显示骨架"><input type="checkbox" id="optSkin" checked disabled> 蒙皮</label>
-        <label><input type="checkbox" id="optFollow" checked> 跟随</label>
-        <label><input type="checkbox" id="optSync" checked> 同步视频</label>
-        <label><input type="checkbox" id="optAudio" checked> 原声</label>
+        <label title="在模型表面叠加 SMPL-H 骨架和关节" data-i18n-title="view.skeleton_hint"><input type="checkbox" id="optSkeleton" checked disabled> <span data-i18n="view.skeleton">骨架</span></label>
+        <label title="用 Blender 风格的八面体显示骨骼" data-i18n-title="view.cones_hint"><input type="checkbox" id="optBoneCones" disabled> <span data-i18n="view.cones">锥体骨骼</span></label>
+        <label title="勾选显示人物表面，取消勾选只显示骨架" data-i18n-title="view.skin_hint"><input type="checkbox" id="optSkin" checked disabled> <span data-i18n="view.skin">蒙皮</span></label>
+        <label><input type="checkbox" id="optFollow" checked> <span data-i18n="view.follow">跟随</span></label>
+        <label><input type="checkbox" id="optSync" checked> <span data-i18n="view.sync">同步视频</span></label>
+        <label><input type="checkbox" id="optAudio" checked> <span data-i18n="view.audio">原声</span></label>
       </div>
     </div>
   </section>
 
-  <section class="timeline-editor" aria-label="时间轴">
+  <section class="timeline-editor" aria-label="时间轴" data-i18n-label="timeline.title">
     <div class="timeline-head">
-      <h3 class="card-title editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2.5 1.5"/></svg>时间轴</h3>
+      <h3 class="card-title editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2.5 1.5"/></svg><span data-i18n="timeline.title">时间轴</span></h3>
       <div class="controls" id="controls">
-        <button type="button" class="editor-icon transport" data-frame-action="first" title="首帧" aria-label="首帧" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3v10m9-9L6 8l6 4z"/></svg></button>
-        <button type="button" class="editor-icon transport" data-frame-action="previous" title="上一帧" aria-label="上一帧" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-5 4 5 4"/></svg></button>
-        <button type="button" class="play" id="btnPlay" aria-label="播放或暂停" disabled>
+        <button type="button" class="editor-icon transport" data-frame-action="first" title="首帧" aria-label="首帧" disabled data-i18n-title="timeline.first" data-i18n-label="timeline.first"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3v10m9-9L6 8l6 4z"/></svg></button>
+        <button type="button" class="editor-icon transport" data-frame-action="previous" title="上一帧" aria-label="上一帧" disabled data-i18n-title="timeline.prev" data-i18n-label="timeline.prev"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-5 4 5 4"/></svg></button>
+        <button type="button" class="play" id="btnPlay" aria-label="播放或暂停" disabled data-i18n-label="timeline.play">
           <svg viewBox="0 0 24 24" id="iconPlay"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
           <svg viewBox="0 0 24 24" id="iconPause" class="hidden"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></svg>
         </button>
-        <button type="button" class="editor-icon transport" data-frame-action="next" title="下一帧" aria-label="下一帧" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 5 4-5 4"/></svg></button>
-        <button type="button" class="editor-icon transport" data-frame-action="last" title="尾帧" aria-label="尾帧" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 3v10M4 4l6 4-6 4z"/></svg></button>
+        <button type="button" class="editor-icon transport" data-frame-action="next" title="下一帧" aria-label="下一帧" disabled data-i18n-title="timeline.next" data-i18n-label="timeline.next"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 5 4-5 4"/></svg></button>
+        <button type="button" class="editor-icon transport" data-frame-action="last" title="尾帧" aria-label="尾帧" disabled data-i18n-title="timeline.last" data-i18n-label="timeline.last"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 3v10M4 4l6 4-6 4z"/></svg></button>
         <div class="frame num" id="frameLabel">– / –</div>
-        <select id="speed" class="select" aria-label="播放速度" disabled>
+        <select id="speed" class="select" aria-label="播放速度" disabled data-i18n-label="timeline.speed">
           <option value="0.25">0.25×</option>
           <option value="0.5">0.5×</option>
           <option value="1" selected>1×</option>
@@ -380,108 +390,115 @@
       <span class="timeline-rate" id="timelineRange">30 FPS</span>
     </div>
     <div class="trim-lane" id="trimLane">
-      <span class="trim-label">处理区间</span>
+      <span class="trim-label" data-i18n="timeline.range">处理区间</span>
       <div class="trim-range" id="trimRange">
         <span class="trim-fill"></span>
-        <input type="range" id="trimStart" class="trim-handle" min="1" max="1" value="1" aria-label="处理起始帧" disabled>
-        <input type="range" id="trimEnd" class="trim-handle" min="1" max="1" value="1" aria-label="处理结束帧" disabled>
+        <input type="range" id="trimStart" class="trim-handle" min="1" max="1" value="1" aria-label="处理起始帧" disabled data-i18n-label="timeline.start_label">
+        <input type="range" id="trimEnd" class="trim-handle" min="1" max="1" value="1" aria-label="处理结束帧" disabled data-i18n-label="timeline.end_label">
       </div>
-      <label>起 <input id="trimStartValue" type="number" min="1" step="1" value="1" aria-label="输入处理起始帧" disabled></label>
-      <label>止 <input id="trimEndValue" type="number" min="1" step="1" placeholder="自动" aria-label="输入处理结束帧，留空自动" disabled></label>
-      <button type="button" class="btn-secondary small" id="trimFull" title="处理完整人物轨迹" disabled>全段</button>
+      <label><span data-i18n="timeline.start">起</span> <input id="trimStartValue" type="number" min="1" step="1" value="1" aria-label="输入处理起始帧" disabled data-i18n-label="timeline.start_input"></label>
+      <label><span data-i18n="timeline.end">止</span> <input id="trimEndValue" type="number" min="1" step="1" placeholder="自动" aria-label="输入处理结束帧，留空自动" disabled data-i18n-placeholder="common.auto" data-i18n-label="timeline.end_input"></label>
+      <button type="button" class="btn-secondary small" id="trimFull" title="处理完整人物轨迹" disabled data-i18n-title="timeline.full_hint" data-i18n="timeline.full">全段</button>
     </div>
     <div class="timeline-track" id="timelineTrack">
       <div class="timeline-ticks num" id="timelineTicks" aria-hidden="true"></div>
       <div class="motion-strip" aria-hidden="true">▧ FlowHMR</div>
       <div class="playhead num" id="playhead" aria-hidden="true"></div>
-      <input type="range" id="scrub" min="0" max="0" value="0" step="1" aria-label="跳转到动作帧" disabled>
+      <input type="range" id="scrub" min="0" max="0" value="0" step="1" aria-label="跳转到动作帧" disabled data-i18n-label="timeline.seek">
     </div>
   </section>
-  <div class="editor-splitter splitter-source" data-split="source" role="separator" tabindex="0" aria-orientation="vertical" aria-label="调整视频编辑器宽度" title="拖动调整视频宽度，双击恢复"></div>
-  <div class="editor-splitter splitter-properties" data-split="properties" role="separator" tabindex="0" aria-orientation="vertical" aria-label="调整属性编辑器宽度" title="拖动调整右侧宽度，双击恢复"></div>
-  <div class="editor-splitter splitter-timeline" data-split="timeline" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="调整时间轴高度" title="拖动调整时间轴高度，双击恢复"></div>
+  <div class="editor-splitter splitter-source" data-split="source" role="separator" tabindex="0" aria-orientation="vertical" aria-label="调整视频编辑器宽度" title="拖动调整视频宽度，双击恢复" data-i18n-label="layout.source" data-i18n-title="layout.source_hint"></div>
+  <div class="editor-splitter splitter-properties" data-split="properties" role="separator" tabindex="0" aria-orientation="vertical" aria-label="调整属性编辑器宽度" title="拖动调整右侧宽度，双击恢复" data-i18n-label="layout.properties" data-i18n-title="layout.properties_hint"></div>
+  <div class="editor-splitter splitter-timeline" data-split="timeline" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="调整时间轴高度" title="拖动调整时间轴高度，双击恢复" data-i18n-label="layout.timeline" data-i18n-title="layout.timeline_hint"></div>
 </main>
 
-<footer class="workspace-status"><span id="viewControlHint">左键平移 · 中键/右键旋转 · 滚轮缩放 · 空格播放</span><span id="workspaceState">FlowHMR</span></footer>
+<footer class="workspace-status"><span id="viewControlHint" data-i18n="view.pan_status">左键平移 · 中键/右键旋转 · 滚轮缩放 · 空格播放</span><span id="workspaceState">FlowHMR</span></footer>
 
 <dialog id="modelDialog" class="model-dialog" aria-labelledby="modelTitle">
   <header class="model-dialog-head">
-    <h2 id="modelTitle">模型文件</h2>
-    <form method="dialog"><button type="submit" class="editor-icon" aria-label="关闭" title="关闭">
+    <h2 id="modelTitle" data-i18n="models.title">模型文件</h2>
+    <form method="dialog"><button type="submit" class="editor-icon" aria-label="关闭" title="关闭" data-i18n-label="common.close" data-i18n-title="common.close">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
     </button></form>
   </header>
   <div class="model-location">
-    <input type="text" class="input" id="modelDirectory" aria-label="模型文件夹路径" placeholder="正在读取路径…" readonly>
-    <button type="button" class="btn-secondary small" id="modelOpenFolder" disabled>打开文件夹</button>
+    <input type="text" class="input" id="modelDirectory" aria-label="模型文件夹路径" placeholder="正在读取路径…" readonly data-i18n-label="models.directory" data-i18n-placeholder="models.directory_reading">
+    <button type="button" class="btn-secondary small" id="modelOpenFolder" disabled data-i18n="common.open_folder">打开文件夹</button>
   </div>
-  <p class="model-guide">公开模型可自动下载。需登录下载的官方包按下方目录直接解压即可。</p>
+  <p class="model-guide" id="modelImportGuide" data-i18n="models.guide">公开模型可自动下载。登录下载的官方包解压后，可选择文件夹导入。</p>
+  <p class="model-guide hidden" id="modelManualGuide" data-i18n="models.manual_guide"></p>
   <div id="modelList" class="model-list"></div>
   <div id="modelTransfer" class="model-transfer hidden">
     <p id="modelTransferLabel"></p>
-    <progress id="modelTransferBar" aria-label="模型下载进度"></progress>
+    <progress id="modelTransferBar" aria-label="模型下载进度" data-i18n-label="models.download_progress"></progress>
     <ul id="modelTransferErrors" class="model-transfer-errors hidden"></ul>
+  </div>
+  <div id="modelImport" class="model-transfer hidden">
+    <p id="modelImportLabel" role="status"></p>
+    <progress id="modelImportBar" data-i18n-label="models.import_progress"></progress>
+    <ul id="modelImportResults" class="model-import-results hidden"></ul>
   </div>
   <footer class="model-dialog-foot">
     <span id="modelCheckStatus" role="status"></span>
     <div class="model-actions">
-      <button type="button" class="btn-secondary small" id="modelRefresh">刷新</button>
-      <button type="button" class="btn-secondary small" id="modelVerify" title="逐字节校验已下载模型的 SHA-256；首次较慢，之后使用缓存。">校验哈希</button>
-      <button type="button" class="btn-primary small hidden" id="modelDownload">下载缺失模型</button>
-      <button type="button" class="btn-secondary small hidden" id="modelDownloadStop">停止下载</button>
+      <button type="button" class="btn-secondary small hidden" id="modelImportFolder" data-i18n="models.import" data-i18n-title="models.import_hint">导入已解压文件夹…</button>
+      <button type="button" class="btn-secondary small" id="modelRefresh" data-i18n="common.refresh">刷新</button>
+      <button type="button" class="btn-secondary small" id="modelVerify" title="逐字节校验已下载模型的 SHA-256；首次较慢，之后使用缓存。" data-i18n-title="models.hash_hint" data-i18n="models.verify">校验哈希</button>
+      <button type="button" class="btn-primary small hidden" id="modelDownload" data-i18n="models.download_missing">下载缺失模型</button>
+      <button type="button" class="btn-secondary small hidden" id="modelDownloadStop" data-i18n="download.stop">停止下载</button>
     </div>
   </footer>
 </dialog>
 
 <dialog id="runtimeDialog" class="model-dialog runtime-dialog" aria-labelledby="runtimeTitle">
   <header class="model-dialog-head">
-    <h2 id="runtimeTitle">运行环境</h2>
-    <form method="dialog"><button type="submit" class="editor-icon" aria-label="关闭" title="关闭">
+    <h2 id="runtimeTitle" data-i18n="runtime.title">运行环境</h2>
+    <form method="dialog"><button type="submit" class="editor-icon" aria-label="关闭" title="关闭" data-i18n-label="common.close" data-i18n-title="common.close">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
     </button></form>
   </header>
   <div class="model-location">
-    <input type="text" class="input" id="runtimeDirectory" aria-label="运行环境文件夹路径" readonly>
-    <button type="button" class="btn-secondary small" id="runtimeOpenFolder" disabled>打开文件夹</button>
+    <input type="text" class="input" id="runtimeDirectory" aria-label="运行环境文件夹路径" readonly data-i18n-label="runtime.directory">
+    <button type="button" class="btn-secondary small" id="runtimeOpenFolder" disabled data-i18n="common.open_folder">打开文件夹</button>
   </div>
-  <p class="model-guide" id="runtimeGpu">正在检测显卡…</p>
-  <p class="model-guide">选择一个版本下载并启用即可生成动作。下载失败可续传；切换版本会重启推理服务。</p>
+  <p class="model-guide" id="runtimeGpu" data-i18n="runtime.detecting">正在检测显卡…</p>
+  <p class="model-guide" data-i18n="runtime.guide">选择一个版本下载并启用即可生成动作。下载失败可续传；切换版本会重启推理服务。</p>
   <div class="model-list" id="runtimeList"></div>
   <div id="runtimeTransfer" class="model-transfer hidden">
     <p id="runtimeTransferLabel"></p>
-    <progress id="runtimeTransferBar" aria-label="运行环境下载进度"></progress>
+    <progress id="runtimeTransferBar" aria-label="运行环境下载进度" data-i18n-label="runtime.download_progress"></progress>
   </div>
   <footer class="model-dialog-foot">
     <span id="runtimeCheckStatus" role="status"></span>
     <div class="model-actions">
-      <button type="button" class="btn-secondary small" id="runtimeRefresh">刷新</button>
-      <button type="button" class="btn-secondary small hidden" id="runtimeDownloadStop">停止下载</button>
-      <button type="button" class="btn-primary small hidden" id="runtimeRestart">应用切换</button>
+      <button type="button" class="btn-secondary small" id="runtimeRefresh" data-i18n="common.refresh">刷新</button>
+      <button type="button" class="btn-secondary small hidden" id="runtimeDownloadStop" data-i18n="download.stop">停止下载</button>
+      <button type="button" class="btn-primary small hidden" id="runtimeRestart" data-i18n="runtime.restart">应用切换</button>
     </div>
   </footer>
 </dialog>
 
 <dialog id="fbxExportDialog" class="fbx-export-dialog" aria-labelledby="fbxExportTitle">
   <form method="dialog">
-    <h3 class="card-title" id="fbxExportTitle">导出 FBX</h3>
+    <h3 class="card-title" id="fbxExportTitle" data-i18n="export.fbx">导出 FBX</h3>
     <fieldset class="fbx-export-people hidden" id="fbxPeople">
-      <legend>放进同一个 FBX 的人物</legend>
+      <legend data-i18n="export.people">放进同一个 FBX 的人物</legend>
       <div id="fbxPeopleList"></div>
     </fieldset>
-    <label class="fbx-export-skin"><input type="checkbox" id="fbxWithSkin"> 包含蒙皮网格</label>
-    <p class="setting-help">带蒙皮时使用当前预览体型。仅用于重定向时，导出动画骨架即可。</p>
+    <label class="fbx-export-skin"><input type="checkbox" id="fbxWithSkin"> <span data-i18n="export.skin">包含蒙皮网格</span></label>
+    <p class="setting-help" data-i18n="export.skin_hint">带蒙皮时使用当前预览体型。仅用于重定向时，导出动画骨架即可。</p>
     <label class="fbx-export-pose" for="fbxFirstPose">
-      <span>首帧参考姿势</span>
+      <span data-i18n="export.reference">首帧参考姿势</span>
       <select id="fbxFirstPose" class="input">
-        <option value="none">不添加</option>
+        <option value="none" data-i18n="export.none">不添加</option>
         <option value="t">T Pose</option>
         <option value="a">A Pose</option>
       </select>
     </label>
-    <p class="setting-help">参考姿势写入第 −1 帧，原动作帧号不变。</p>
+    <p class="setting-help" data-i18n="export.reference_hint">参考姿势写入第 −1 帧，原动作帧号不变。</p>
     <div class="fbx-export-actions">
-      <button class="btn-secondary small" value="cancel">取消</button>
-      <button class="btn-primary small" id="fbxConfirm" value="export">导出</button>
+      <button class="btn-secondary small" value="cancel" data-i18n="common.cancel">取消</button>
+      <button class="btn-primary small" id="fbxConfirm" value="export" data-i18n="common.export">导出</button>
     </div>
   </form>
 </dialog>
