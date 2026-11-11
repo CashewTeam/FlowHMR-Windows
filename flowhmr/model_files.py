@@ -110,6 +110,9 @@ def flowhmr_paths(ckpt=None, config=None):
 
 
 def core_model_paths(ckpt=None, config=None, *, body_reference=None):
+    # If no reference is installed, point setup diagnostics at the recommended
+    # official MANO bundle instead of presenting the optional neutral as required.
+    body_reference = body_reference or smplh_reference() or "male"
     return (*flowhmr_paths(ckpt, config), resolve_model(YOLOX), *sam3d_paths(), resolve_model(VGGT),
             smplh_reference_path(body_reference), resolve_model(JOINT_REGRESSOR))
 

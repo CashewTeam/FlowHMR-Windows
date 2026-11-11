@@ -90,6 +90,7 @@ class ModelIntegrityTest(unittest.TestCase):
             missing = {item["id"]: item for item in server.model_inventory("cpu")["items"]}
             self.assertTrue(missing["mano"]["blocking"])
             self.assertFalse(missing["smplh"]["blocking"])
+            self.assertEqual(files.core_model_paths()[-2], files.resolve_model(files.SMPLH_FILES["male"]))
 
     def test_verification_uses_active_weights_and_preserves_edited_config(self):
         with TemporaryDirectory() as temporary:
