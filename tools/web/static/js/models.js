@@ -1,7 +1,7 @@
 import { $, el, formatBytes, show } from "./utils.js";
-import { getModelDownload, startModelDownload, stopModelDownload } from "./api.js";
+import { getModelDownload, startModelDownload, stopModelDownload, verifyModels } from "./api.js";
 
-const LABELS = { ready: "已就绪", missing: "缺文件", unavailable: "未就绪" };
+const LABELS = { ready: "已就绪", missing: "缺文件", damaged: "文件损坏", unavailable: "未就绪" };
 const PHASES = { download: "下载", verify: "校验", install: "安装" };
 const active = (state) => state?.status === "running" || state?.status === "stopping";
 const sizeLabel = (n) => n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GB` : formatBytes(n);
@@ -10,6 +10,7 @@ export function initModelDialog(refreshInventory) {
   const dialog = $("modelDialog"), list = $("modelList");
   const directory = $("modelDirectory"), folderButton = $("modelOpenFolder");
   const refreshButton = $("modelRefresh"), status = $("modelCheckStatus");
+  const verifyButton = $("modelVerify");
   const downloadButton = $("modelDownload"), stopButton = $("modelDownloadStop");
   const transferBox = $("modelTransfer"), transferLabel = $("modelTransferLabel");
   const transferBar = $("modelTransferBar"), transferErrors = $("modelTransferErrors");
@@ -53,12 +54,21 @@ export function initModelDialog(refreshInventory) {
           missing.append(el("span", "", "缺少"), ...item.missing.map((file) => el("code", "", file)));
           row.append(missing);
         }
+        if (item.damaged?.length) {
+          const damaged = el("div", "model-install model-missing");
+          damaged.append(el("span", "", "文件异常"),
+            ...item.damaged.map((entry) => el("code", "", `${entry.file}：${entry.detail}`)));
+          row.append(damaged);
+        }
         if (item.issue) row.append(el("p", "model-issue", item.issue));
       }
       return row;
     }));
-    const missing = inventory.items.filter((item) => item.blocking).length;
-    status.textContent = missing ? `缺少 ${missing} 组必需模型` : "必需模型齐全";
+    const blocking = inventory.items.filter((item) => item.blocking);
+    const damaged = blocking.filter((item) => item.status === "damaged").length;
+    if (!blocking.length) status.textContent = "必需模型齐全";
+    else if (damaged) status.textContent = `${blocking.length} 组必需模型未就绪，其中 ${damaged} 组文件损坏`;
+    else status.textContent = `缺少 ${blocking.length} 组必需模型`;
   }
 
   const groupName = (group) => inventory?.items.find((item) => item.id === group)?.name ?? group;
@@ -137,6 +147,31 @@ export function initModelDialog(refreshInventory) {
     }
   }
 
+  async function verifyHashes() {
+    if (busy) return;
+    busy = true;
+    version++;
+    clearTimeout(pollTimer);
+    refreshButton.disabled = true;
+    verifyButton.disabled = true;
+    status.textContent = "正在校验文件哈希，首次可能需要几分钟…";
+    let message;
+    try {
+      const report = await verifyModels();
+      message = report.problems?.length
+        ? `哈希校验发现 ${report.problems.length} 个文件有问题`
+        : `哈希校验通过（${report.checked} 个文件）`;
+    } catch (error) {
+      message = `校验失败：${error.message}`;
+    }
+    busy = false;
+    refreshButton.disabled = false;
+    verifyButton.disabled = false;
+    // 重新读一次清单，让徽章反映刚写进缓存的哈希结果。
+    await refresh();
+    status.textContent = message;
+  }
+
   async function changeDownload(action) {
     if (busy) return;
     busy = true;
@@ -167,6 +202,7 @@ export function initModelDialog(refreshInventory) {
     void refresh();
   });
   refreshButton.addEventListener("click", refresh);
+  verifyButton.addEventListener("click", verifyHashes);
   downloadButton.addEventListener("click", () => changeDownload(startModelDownload));
   stopButton.addEventListener("click", () => changeDownload(() => stopModelDownload(transfer.id)));
   dialog.addEventListener("close", () => { version++; clearTimeout(pollTimer); });

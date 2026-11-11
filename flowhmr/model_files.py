@@ -1,7 +1,6 @@
 """Resolve local model files without importing or loading any model runtime."""
 
 from pathlib import Path
-from stat import S_ISREG
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -36,11 +35,15 @@ def ensure_model_folders():
 
 
 def file_present(path):
-    try:
-        info = Path(path).stat()
-        return S_ISREG(info.st_mode) and info.st_size > 0
-    except OSError:
-        return False
+    """True when the file exists and matches the size its source publishes.
+
+    Existence alone is not enough: an interrupted download leaves a file that
+    looks present and then fails much later inside torch.load. The import is
+    deferred because model_integrity reads this module for the model root.
+    """
+    from . import model_integrity
+
+    return model_integrity.check(path).ok
 
 
 def resolve_model(relative):

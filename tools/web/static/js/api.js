@@ -21,6 +21,7 @@ export const getInfo = () => json("/api/info", { cache: "no-store" });
 export const getModelDownload = () => json("/api/models/download", { cache: "no-store" });
 export const startModelDownload = () => postJson("/api/models/download");
 export const stopModelDownload = (id) => postJson("/api/models/download/stop", { id });
+export const verifyModels = () => postJson("/api/models/verify");
 export const getRuntime = () => json("/api/runtime", { cache: "no-store" });
 export const startRuntimeDownload = (version) => postJson("/api/runtime/download", { version });
 export const stopRuntimeDownload = (id) => postJson("/api/runtime/download/stop", { id });

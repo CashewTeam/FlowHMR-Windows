@@ -1,6 +1,7 @@
 """Model catalog for the local UI. Checking it only reads file metadata."""
 
 from . import model_files as files
+from . import model_integrity
 from . import model_sources as sources
 from .utils.runtime_hamer import hamer_model_status
 
@@ -12,10 +13,21 @@ def _display_path(path):
 
 
 def _item(key, name, paths, folder, links, *, required=True, issue=None, archive=None):
-    missing = [_display_path(path) for path in paths if not files.file_present(path)]
-    status = "missing" if missing else "unavailable" if issue else "ready"
+    verdicts = [(path, model_integrity.check(path)) for path in paths]
+    missing = [_display_path(path) for path, verdict in verdicts if verdict.state == "missing"]
+    damaged = [{"file": _display_path(path), "detail": verdict.detail}
+               for path, verdict in verdicts if verdict.state in ("incomplete", "corrupt")]
+    if missing:
+        status = "missing"
+    elif damaged:
+        status = "damaged"
+    elif issue:
+        status = "unavailable"
+    else:
+        status = "ready"
     return {"id": key, "name": name, "status": status, "required": required,
             "blocking": required and status != "ready", "folder": folder, "missing": missing,
+            "damaged": damaged,
             "archive": {"entry": archive[0], "name": archive[1]} if archive else None,
             "issue": issue, "links": [{"label": label, "url": url} for label, url in links]}
 
