@@ -83,7 +83,7 @@ export function initViewer(preview) {
   const perspective = new THREE.PerspectiveCamera(40, 1, 0.05, 200);
   const orthographic = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 200);
   let camera = perspective;
-  camera.position.set(2.6, 1.6, 3.6);
+  camera.position.set(0, 0.9, 4.3);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0.9, 0);
   controls.enableDamping = true;
@@ -253,6 +253,11 @@ export function initViewer(preview) {
   }
   function setView(name) {
     const direction = views[name];
+    // Consume any remaining drag inertia before snapping to an axis.
+    const damping = controls.enableDamping;
+    controls.enableDamping = false;
+    controls.update();
+    controls.enableDamping = damping;
     setProjection(orthographic);
     const distance = camera.position.distanceTo(controls.target);
     camera.position.copy(controls.target).addScaledVector(direction, distance);
@@ -580,6 +585,11 @@ export function initViewer(preview) {
     invalidate();
   }
 
+  function frameDefaultView() {
+    setView("front");
+    resetView();
+  }
+
   // On loop: move camera + target back with the body, keeping the user's zoom and angle.
   function recenterOnFrame(f) {
     const root = frameRoot(f);
@@ -818,6 +828,8 @@ export function initViewer(preview) {
     }
   });
 
+  frameDefaultView();
+
   return {
     setBodyVariants(names = ["neutral"], preferred = "neutral") {
       const available = new Set(names);
@@ -894,7 +906,7 @@ export function initViewer(preview) {
       }));
       labelBody();
       setFrame(0);
-      resetView();
+      frameDefaultView();
       setPlaying(false);
       void Promise.all(inspections).then((results) => {
         if (!load.signal.aborted && state.jobId === jobId) results.forEach((info, i) => setInspection(actors[i], info));
@@ -928,6 +940,7 @@ export function initViewer(preview) {
       setText($("viewportObject"), m("view.scene"));
       setText($("resultInfo"), "");
       setAttr($("resultInfo"), "title", "");
+      frameDefaultView();
     },
     setStatus(text) { if (!state.meta) setText($("viewerEmpty"), text); },
     get jobId() { return state.jobId; },
