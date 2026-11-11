@@ -82,10 +82,13 @@ export function initViewer(preview) {
 
   const perspective = new THREE.PerspectiveCamera(40, 1, 0.05, 200);
   const orthographic = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 200);
+  const defaultTarget = new THREE.Vector3(0, 0.9, 0);
+  const frontOffset = new THREE.Vector3(0, -0.43, 4.8);
+  const frontDirection = frontOffset.clone().normalize();
   let camera = perspective;
-  camera.position.set(0, 0.9, 4.3);
+  camera.position.copy(defaultTarget).add(frontOffset);
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 0.9, 0);
+  controls.target.copy(defaultTarget);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.minDistance = 0.8;
@@ -251,13 +254,15 @@ export function initViewer(preview) {
     setText($("viewportName"), m(camera === orthographic ? "view.user_orthographic" : "view.user_perspective"));
     invalidate();
   }
-  function setView(name) {
-    const direction = views[name];
-    // Consume any remaining drag inertia before snapping to an axis.
+  function clearOrbitInertia() {
     const damping = controls.enableDamping;
     controls.enableDamping = false;
     controls.update();
     controls.enableDamping = damping;
+  }
+  function setView(name) {
+    const direction = views[name];
+    clearOrbitInertia();
     setProjection(orthographic);
     const distance = camera.position.distanceTo(controls.target);
     camera.position.copy(controls.target).addScaledVector(direction, distance);
@@ -570,14 +575,14 @@ export function initViewer(preview) {
     if (!ready) $("frameLabel").textContent = "– / –";
   }
 
-  function resetView() {
+  function frameView(direction) {
     const m = state.meta;
     const root = m ? frameRoot(state.frame) : new THREE.Vector3();
-    const height = m ? Math.max(1.2, m.bbox_max[1] - m.bbox_min[1]) : 1.8;
+    const height = m ? Math.max(1.2, m.bbox_max[1] - m.bbox_min[1]) : defaultTarget.y * 2;
     const width = state.scene ? Math.hypot(m.bbox_max[0] - m.bbox_min[0], m.bbox_max[2] - m.bbox_min[2]) : 0;
-    const direction = camera.position.clone().sub(controls.target).normalize();
+    const distance = m ? Math.max(4, height * 2.4, width * 1.7) : frontOffset.length();
     controls.target.set(root.x, height * 0.5, root.z);
-    camera.position.copy(controls.target).addScaledVector(direction, Math.max(4, height * 2.4, width * 1.7));
+    camera.position.copy(controls.target).addScaledVector(direction, distance);
     zoom.target = camera.position.distanceTo(controls.target);
     state.prevRoot.copy(root);
     controls.update();
@@ -585,9 +590,14 @@ export function initViewer(preview) {
     invalidate();
   }
 
+  function resetView() {
+    frameView(camera.position.clone().sub(controls.target).normalize());
+  }
+
   function frameDefaultView() {
-    setView("front");
-    resetView();
+    clearOrbitInertia();
+    setProjection(perspective);
+    frameView(frontDirection);
   }
 
   // On loop: move camera + target back with the body, keeping the user's zoom and angle.
@@ -827,8 +837,6 @@ export function initViewer(preview) {
       if (bodyController === change) { bodyController = null; bodySelect.disabled = false; }
     }
   });
-
-  frameDefaultView();
 
   return {
     setBodyVariants(names = ["neutral"], preferred = "neutral") {
