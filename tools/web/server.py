@@ -46,9 +46,11 @@ from flowhmr.utils.runtime_preview_inspection import PreviewInspection
 from flowhmr.utils.runtime_preview_thumbnail import ensure_thumbnail
 from flowhmr.core.bodymodels.body_variants import available_variants, model_path, write_preview_vertices
 from flowhmr.model_files import (
-    SMPLH_FILES, core_model_paths, ensure_model_folders, file_present, flowhmr_paths, missing_model_paths, resolve_model,
+    SMPLH_FILES, core_model_paths, ensure_model_folders, flowhmr_paths, missing_model_paths,
+    smplh_reference,
 )
 from flowhmr import model_integrity
+from flowhmr.model_sources import PUBLIC_ASSETS
 from flowhmr.model_import import ModelImporter, ModelImportError
 from flowhmr.model_inventory import model_inventory
 from flowhmr.model_downloads import ACTIVE_DOWNLOAD, DownloadError, ModelDownloads, missing_downloads
@@ -122,8 +124,8 @@ class UserMessage(ValueError):
 
 
 # --------------------------------------------------------------------------- engine
-def checked_model_paths(args):
-    paths = core_model_paths(args.ckpt, args.model_cfg)
+def checked_model_paths(args, body_reference=None):
+    paths = core_model_paths(args.ckpt, args.model_cfg, body_reference=body_reference)
     missing = missing_model_paths(paths)
     if missing:
         listing = "\n".join(missing)
@@ -132,9 +134,8 @@ def checked_model_paths(args):
     return paths
 
 
-def load_engine(args):
+def load_engine(args, body_reference, paths):
     """Validate and load the models from the job worker, never from startup or HTTP."""
-    paths = checked_model_paths(args)
     ckpt, model_cfg = paths[:2]
 
     import torch
@@ -154,20 +155,50 @@ def load_engine(args):
 
     return V2MInferenceEngine.build(
         ckpt=str(ckpt), model_cfg_path=str(model_cfg), device=args.device,
+        smpl_model_path=str(paths[-2]), body_reference=body_reference,
     )
 
 
-def get_engine(job_id):
-    global ENGINE
-    if ENGINE is None:
-        _raise_if_cancelled(job_id)
-        engine = load_engine(ARGS)
-        with JOBS_LOCK:
-            if job_id in CANCEL_REQUESTS:
-                raise JobCancelled()
-            ENGINE = engine
-            JOBS[job_id].update(loading_models=False, message="Starting")
-            _persist_job_locked(JOBS[job_id])
+def job_body_reference(job):
+    reference = job.get("body_reference")
+    return reference if isinstance(reference, str) and reference in SMPLH_FILES else "neutral"
+
+
+def missing_body_reference(reference):
+    return UserMessage("请安装此任务生成时使用的 SMPL-H 体型。",
+                       "body_reference_missing", body=reference)
+
+
+def get_engine(job_id, requested_reference=None):
+    global ENGINE, _POSTPROCESS
+    from flowhmr.core.bodymodels.smplh_data import validated_smplh_reference
+
+    _raise_if_cancelled(job_id)
+    try:
+        reference, _ = validated_smplh_reference(requested_reference)
+    except (OSError, ValueError) as error:
+        if requested_reference:
+            raise missing_body_reference(requested_reference) from error
+        raise UserMessage("尚未安装可用的 SMPL-H 体型。请导入官方 MANO v1.2 的男／女体型，或 Extended SMPL+H 的中性体型。",
+                          "model_body_required") from error
+    paths = checked_model_paths(ARGS, reference)
+    if ENGINE is None or ENGINE.body_reference != reference:
+        old = ENGINE
+        ENGINE = _POSTPROCESS = None
+        if old is not None:
+            stop = getattr(old.sam_extractor, "stop", None)
+            if stop is not None:
+                stop()
+            del old
+            cuda = getattr(sys.modules.get("torch"), "cuda", None)
+            if getattr(cuda, "is_initialized", lambda: False)():
+                cuda.empty_cache()
+        ENGINE = load_engine(ARGS, reference, paths)
+    with JOBS_LOCK:
+        if job_id in CANCEL_REQUESTS:
+            raise JobCancelled()
+        JOBS[job_id].update(loading_models=False, message="Starting", body_reference=reference)
+        _persist_job_locked(JOBS[job_id])
     return ENGINE
 
 
@@ -600,6 +631,7 @@ def _confirm_people(job_id, result, candidates, people, *, automatic):
     with JOBS_LOCK:
         parent = JOBS[job_id]
         filename, params, ext = parent["filename"], parent["params"], parent["ext"]
+        reference = job_body_reference(parent)
     directory = job_dir(job_id)
     video = f"{SUB}{ext}"
     canonical = os.path.join(SUB, f"{SUB}_30fps.mp4")
@@ -612,7 +644,8 @@ def _confirm_people(job_id, result, candidates, people, *, automatic):
             candidate = candidates[i]
             child = _build_job(filename, params.copy(), ext)
             child.update(_selected_track(candidate), person_batch=job_id,
-                         video_size=[result.width, result.height], source_frames=result.total_frames)
+                         video_size=[result.width, result.height], source_frames=result.total_frames,
+                         body_reference=reference)
             child_stage = os.path.join(staging, child["id"])
             sub_dir = os.path.join(child_stage, SUB)
             os.makedirs(sub_dir)
@@ -675,7 +708,7 @@ def _scene_status_locked(parent, members):
         view["finished"] = None
     elif parent.get("scene") and parent.get("scene_state") == "ready":
         scene = parent["scene"]
-        view.update(status="done", progress=100, has_fbx=fbx_export_available(),
+        view.update(status="done", progress=100, has_fbx=fbx_export_available(job_body_reference(parent)),
                     num_frames=scene["num_frames"], track_range=[scene["track_start"], scene["track_end"]],
                     error=None, finished=parent.get("scene_finished") or max(j["finished"] or 0 for j in members))
     elif parent.get("scene_state") in ("queued", "running", "cancel_requested"):
@@ -749,14 +782,15 @@ def _assemble_scene(batch, *, automatic):
 
 def run_job(job_id):
     _raise_if_cancelled(job_id)
-    if ENGINE is not None:
-        checked_model_paths(ARGS)
     with JOBS_LOCK:
         job = JOBS[job_id]
         params = job["params"]
+        requested_reference = job.get("body_reference")
+        if not isinstance(requested_reference, str) or requested_reference not in SMPLH_FILES:
+            requested_reference = None
         if params["hamer"] and not hamer_available(ARGS.device):
             raise UserMessage(MISSING_HAMER, "hamer_not_ready")
-        loading_models = ENGINE is None
+        loading_models = ENGINE is None or ENGINE.body_reference != (requested_reference or smplh_reference())
         job.update(status="running", loading_models=loading_models, started=time.time(),
                    message="首次运行，正在加载推理模型…" if loading_models else "Starting")
         _persist_job_locked(job)
@@ -823,7 +857,7 @@ def run_job(job_id):
         _confirm_people(job_id, result, candidates, chosen, automatic=people is None)
         return chosen[0]
 
-    engine = get_engine(job_id)
+    engine = get_engine(job_id, requested_reference)
     _raise_if_cancelled(job_id)
     engine.pipeline.validation_steps = params["steps"]
     engine.postprocess = None
@@ -863,7 +897,8 @@ def run_job(job_id):
     if os.path.exists(bbox_npz):
         with np.load(bbox_npz, allow_pickle=False) as bbox:
             start = int(bbox["start_end"][0])
-    meta.update({"track_start": start, "track_end": start + meta["num_frames"] - 1})
+    meta.update({"track_start": start, "track_end": start + meta["num_frames"] - 1,
+                 "body_reference": engine.body_reference})
     with open(os.path.join(out_root, "mesh", "meta.json"), "w") as f:
         json.dump(meta, f)
 
@@ -1035,9 +1070,10 @@ def api_info():
     inventory = model_inventory(ARGS.device, ARGS.ckpt, config)
     if local_model_request():
         plan = missing_downloads(ARGS.device, ARGS.ckpt, config, include_hamer=True)
-        inventory["hamer_download_bytes"] = sum(asset.size for asset in plan.pop("hamer", ()))
+        inventory["download_sizes"] = {group: sum(asset.size for asset in assets) for group, assets in plan.items()}
+        inventory["hamer_download_bytes"] = inventory["download_sizes"].get("hamer", 0)
         inventory["downloadable"] = list(plan)
-        inventory["download_bytes"] = sum(asset.size for assets in plan.values() for asset in assets)
+        inventory["download_bytes"] = sum(inventory["download_sizes"].values())
         inventory["download"] = MODEL_DOWNLOADS.snapshot()
         inventory["import"] = MODEL_IMPORTER.status()
     return jsonify({
@@ -1052,6 +1088,7 @@ def api_info():
         "postprocess_available": native_correction_available(),
         "hamer_available": any(item["id"] == "hamer" and item["status"] == "ready" for item in inventory["items"]),
         "body_variants": available_variants(),
+        "body_reference": smplh_reference(),
         "motion_frame_capacity": MAX_MOTION_FRAMES,
         "sam_manual_default": getattr(ARGS, "sam_chunk_default", 16),
     })
@@ -1133,7 +1170,10 @@ def api_model_download():
     if request.method == "GET":
         return jsonify(MODEL_DOWNLOADS.snapshot())
     body = request.get_json(silent=True)
-    if body not in ({}, {"group": "hamer"}):
+    if not isinstance(body, dict) or set(body) - {"group"}:
+        return api_error("download_invalid", "无效的下载请求。", 400)
+    group = body.get("group") if body else None
+    if body and (not isinstance(group, str) or group not in (*PUBLIC_ASSETS, "all", "hamer")):
         return api_error("download_invalid", "无效的下载请求。", 400)
     with RUNTIME_SWITCH_LOCK:
         if RUNTIME.summary()["pending_restart"]:
@@ -1141,11 +1181,10 @@ def api_model_download():
         if MODEL_IMPORTER.active or MODEL_VERIFY_LOCK.locked():
             return api_error("model_operation_busy", "正在导入或校验模型，请稍后再下载。", 409)
         config = getattr(ARGS, "model_cfg", None)
-        hamer = body.get("group") == "hamer"
-        plan = missing_downloads(ARGS.device, ARGS.ckpt, config, include_hamer=hamer)
-        if hamer:
-            plan = {"hamer": plan["hamer"]} if "hamer" in plan else {}
-        return jsonify(MODEL_DOWNLOADS.start(plan))
+        plan = missing_downloads(ARGS.device, ARGS.ckpt, config, include_hamer=group in ("all", "hamer"))
+        if group is not None and group != "all":
+            plan = {group: plan[group]} if group in plan else {}
+        return jsonify(MODEL_DOWNLOADS.start(plan, scope=group))
 
 
 @app.route("/api/models/download/stop", methods=["POST"])
@@ -1357,7 +1396,7 @@ def api_job(job_id):
         members = _batch_members_locked(job_id)
         job = copy.deepcopy(_scene_status_locked(row, members) if len(members) > 1 else row)
     if job["status"] == "done" and not job.get("person_count"):
-        job["has_fbx"] = fbx_export_available() and os.path.isfile(os.path.join(job_dir(job_id), "motion.npz"))
+        job["has_fbx"] = fbx_export_available(job_body_reference(job)) and os.path.isfile(os.path.join(job_dir(job_id), "motion.npz"))
     if not job.get("source_frames") and job["status"] in ("done", "cancelled", "failed"):
         canonical = os.path.join(job_dir(job_id), SUB, f"{SUB}_30fps.mp4")
         if os.path.isfile(canonical):
@@ -1536,8 +1575,14 @@ _RESULT_FILES = {
 }
 
 
-def fbx_export_available():
-    return find_spec("fbx") is not None and file_present(resolve_model(SMPLH_FILES["neutral"]))
+def fbx_export_available(reference):
+    if find_spec("fbx") is None:
+        return False
+    try:
+        model_path(reference)
+    except ValueError:
+        return False
+    return True
 
 
 def export_stem(job):
@@ -1551,15 +1596,14 @@ def file_stamp(path):
     return f"{stat.st_mtime_ns:x}_{stat.st_size:x}"
 
 
-def variant_preview(directory, body):
+def variant_preview(directory, body, reference, reference_path):
     variant = model_path(body)
     source = os.path.join(directory, "motion.npz")
     mesh = os.path.join(directory, "mesh")
     with open(os.path.join(mesh, "meta.json"), encoding="utf-8") as f:
         meta = json.load(f)
     size = int(meta["num_frames"]) * int(meta["num_vertices"]) * 6
-    neutral = model_path("neutral")
-    name = f"vertices_v1_{body}_{file_stamp(source)}_{file_stamp(neutral)}_{file_stamp(variant)}.bin"
+    name = f"vertices_v2_{reference}_{body}_{file_stamp(source)}_{file_stamp(reference_path)}_{file_stamp(variant)}.bin"
     output = os.path.join(mesh, name)
     with BODY_PREVIEW_LOCK:
         if os.path.isfile(output) and os.path.getsize(output) == size:
@@ -1567,7 +1611,7 @@ def variant_preview(directory, body):
         part = output + ".part"
         try:
             with open(part, "wb") as f:
-                write_preview_vertices(source, variant, f)
+                write_preview_vertices(source, variant, f, reference_path=reference_path)
             if os.path.getsize(part) != size:
                 raise ValueError("体型预览的帧数与动作不一致。")
             os.replace(part, output)
@@ -1583,8 +1627,15 @@ def api_fbx(job_id):
     directory = job_dir(job_id)
     is_scene = job.get("person_batch") == job_id
     source = os.path.join(directory, "scene" if is_scene else "", "motion.npz")
-    if (not job.get("scene") if is_scene else job["status"] != "done") or not os.path.isfile(source) or not fbx_export_available():
+    if ((not job.get("scene") if is_scene else job["status"] != "done")
+            or not os.path.isfile(source) or find_spec("fbx") is None):
         abort(404)
+    reference = job_body_reference(job)
+    try:
+        reference_path = model_path(reference)
+    except ValueError:
+        error = missing_body_reference(reference)
+        return api_error(error.code, str(error), 409, **error.params)
     mode = request.args.get("mesh", "1")
     if mode not in ("0", "1"):
         return api_error("fbx_mesh_mode", "请选择仅骨架或包含蒙皮网格。", 400)
@@ -1593,12 +1644,14 @@ def api_fbx(job_id):
         return api_error("fbx_reference_pose", "参考姿势请选择不添加、T Pose 或 A Pose。", 400)
     with_skin = mode == "1"
     suffix = "skin" if with_skin else "skeleton"
-    body = request.args.get("body", "neutral") if with_skin else "neutral"
+    body = request.args.get("body", reference) if with_skin else reference
     try:
-        variant = model_path(body) if body != "neutral" else None
+        variant = model_path(body) if body != reference else None
     except ValueError as exc:
         return api_error("body_variant", str(exc), 400, variant=body)
-    tag = f"_{body}_{file_stamp(model_path('neutral'))}_{file_stamp(variant)}" if variant else ""
+    tag = f"_{reference}_{file_stamp(reference_path)}"
+    if variant is not None:
+        tag += f"_{body}_{file_stamp(variant)}"
     chosen, signature = None, ""
     if is_scene:
         available = job["scene"]["people"]
@@ -1612,18 +1665,18 @@ def api_fbx(job_id):
     # rig instead of sending a legacy FBX saved before the exporter fix.
     with FBX_EXPORT_LOCK:
         exports = os.path.join(directory, "scene" if is_scene else "", "exports")
-        prefix = f"fbx_scene_v2_{signature}" if is_scene else "fbx_mmr_v2"
+        prefix = f"fbx_scene_v3_{signature}" if is_scene else "fbx_mmr_v3"
         pose_tag = f"_{first_pose}_pose" if first_pose != "none" else ""
         path = os.path.join(exports, f"{prefix}_{file_stamp(source)}_{suffix}{tag}{pose_tag}.fbx")
         if not os.path.isfile(path):
             from flowhmr.core.export.smplh2fbx import SMPLH2FBX
 
-            with SMPLH2FBX() as converter:
+            with SMPLH2FBX(smplh_model_path=reference_path) as converter:
                 if chosen is None:
                     converter.convert_npz_to_fbx(source, path, export_mesh=with_skin, variant_path=variant, first_pose=first_pose)
                 else:
                     converter.convert_scene_to_fbx(source, chosen, path, export_mesh=with_skin, variant_path=variant, first_pose=first_pose)
-    if variant:
+    if with_skin and body != "neutral":
         suffix = f"{body}_{suffix}"
     suffix += pose_tag
     if is_scene:
@@ -1662,8 +1715,14 @@ def api_skeleton(job_id):
     job = get_job(job_id)
     if job["status"] != "done":
         abort(404)
+    reference = job_body_reference(job)
     try:
-        path, info = INSPECTION.load(job_dir(job_id))
+        model_path(reference)
+    except ValueError:
+        error = missing_body_reference(reference)
+        return api_error(error.code, str(error), 409, **error.params)
+    try:
+        path, info = INSPECTION.load(job_dir(job_id), body_reference=reference)
     except FileNotFoundError:
         abort(404)
     correction = job.get("correction")
@@ -1692,16 +1751,22 @@ def api_result(job_id, kind):
                          download_name=f"{os.path.splitext(job['filename'])[0]}_flowhmr_scene.npz", conditional=True)
     rel, mime = _RESULT_FILES[kind]
     path = os.path.join(job_dir(job_id), rel)
-    body = request.args.get("body", "neutral")
-    if kind == "vertices" and body != "neutral":
+    reference = job_body_reference(job)
+    body = request.args.get("body", "source")
+    if kind == "vertices" and body not in (reference, "source"):
         if job["status"] != "done":
             abort(404)
         try:
-            path = variant_preview(job_dir(job_id), body)
+            reference_path = model_path(reference)
+        except ValueError:
+            error = missing_body_reference(reference)
+            return api_error(error.code, str(error), 409, **error.params)
+        try:
+            path = variant_preview(job_dir(job_id), body, reference, reference_path)
         except FileNotFoundError:
             abort(404)
         except (ValueError, KeyError) as exc:
-            return jsonify(error=str(exc)), 400
+            return api_error("body_variant", str(exc), 400, variant=body)
     if not os.path.exists(path):
         abort(404)
     as_attachment = kind == "npz"

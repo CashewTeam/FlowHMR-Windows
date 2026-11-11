@@ -6,7 +6,7 @@ from threading import Lock
 
 import numpy as np
 
-from flowhmr.model_files import SMPLH_FILES, file_present, resolve_model
+from flowhmr.model_files import smplh_reference_path
 
 _VERSION = 1
 _JOINT_COUNT = 52
@@ -33,38 +33,40 @@ class PreviewInspection:
         self._geometry = None
         self._lock = Lock()
 
-    def _body_geometry(self):
+    def _body_geometry(self, body_reference):
         # Old results without a skeleton cache can rebuild it entirely on the CPU.
-        if self._geometry is None:
-            path = self._model_path or resolve_model(SMPLH_FILES["neutral"])
-            if not file_present(path):
-                raise FileNotFoundError(path)
+        path = self._model_path or smplh_reference_path(body_reference)
+        info = path.stat()
+        stamp = (path, info.st_size, info.st_mtime_ns, info.st_ino)
+        if self._geometry is None or self._geometry[0] != stamp:
             from flowhmr.core.bodymodels.smpl_skeleton import SMPLSkeleton
+            from flowhmr.core.bodymodels.smplh_data import load_smplh_data
 
             skeleton = SMPLSkeleton(str(path)).cpu().eval()
             parents = skeleton.parents.tolist()
-            with np.load(path, allow_pickle=False) as model:
-                weights = model["weights"]
+            weights = load_smplh_data(path)["weights"]
             feet = [np.flatnonzero(weights[:, ankle] + weights[:, toe] > 0.6)
                     for ankle, toe in ((7, 10), (8, 11))]
             if not all(len(foot) for foot in feet):
                 raise ValueError("SMPL-H sole vertices are unavailable")
-            self._geometry = skeleton, parents, feet
-        return self._geometry
+            self._geometry = stamp, (skeleton, parents, feet)
+        return self._geometry[1]
 
-    def load(self, directory):
+    def load(self, directory, *, body_reference=None):
         root = Path(directory)
         mesh_dir = root / "mesh"
         stream = mesh_dir / "joints.bin"
         sidecar = mesh_dir / "inspection.json"
         with self._lock:
             meta = json.loads((mesh_dir / "meta.json").read_text(encoding="utf-8"))
+            reference = body_reference or meta.get("body_reference") or "neutral"
             frames, vertices = int(meta["num_frames"]), int(meta["num_vertices"])
             expected = frames * _JOINT_COUNT * 3 * 4
             try:
                 info = json.loads(sidecar.read_text(encoding="utf-8"))
                 parents = info["parents"]
                 if (info["version"] == _VERSION and info["frames"] == frames
+                        and info.get("body_reference", "neutral") == reference
                         and isinstance(parents, list) and len(parents) == _JOINT_COUNT and parents[0] == -1
                         and all(type(parent) is int and 0 <= parent < i for i, parent in enumerate(parents[1:], 1))
                         and stream.stat().st_size == expected):
@@ -72,7 +74,7 @@ class PreviewInspection:
             except (OSError, ValueError, KeyError, TypeError):
                 pass
 
-            skeleton, parents, feet = self._body_geometry()
+            skeleton, parents, feet = self._body_geometry(reference)
             import torch
 
             with np.load(root / "motion.npz", allow_pickle=False) as data:
@@ -97,7 +99,7 @@ class PreviewInspection:
             if not np.isfinite(joints).all() or not np.isfinite(heights).all():
                 raise ValueError("Non-finite preview geometry")
 
-            info = {"version": _VERSION, "parents": parents, "frames": frames,
+            info = {"version": _VERSION, "parents": parents, "frames": frames, "body_reference": reference,
                     "ground": _estimate_floor(heights, joints[:, [7, 8]], contacts, float(meta["fps"]))}
             pending = stream.with_suffix(".bin.part")
             joints.tofile(pending)

@@ -171,22 +171,25 @@ body { height: 100dvh; }
 .model-list { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 12px 10px; }
 .model-item + .model-item { border-top: 1px solid var(--line); }
 .model-row {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 8px;
   padding: 7px 5px; font-size: 12px;
 }
 .model-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.model-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
 .model-role { color: var(--muted); font-size: 11px; }
 .model-badge { flex-shrink: 0; padding: 2px 6px; border-radius: 3px; font-size: 11px; color: var(--model-warning); background: #bf7c3020; }
 .model-badge[data-state="ready"] { color: var(--model-ready); background: #36a37720; }
 .model-install { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 0 5px 6px; color: var(--muted); font-size: 11px; }
 .model-install code { overflow-wrap: anywhere; user-select: text; }
 .model-archive strong, .model-archive code { color: var(--text); }
+.model-extract-hint { display: block; margin: 0; }
 .model-missing { gap: 3px 8px; }
 .model-install a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
 .model-install a:hover { color: var(--model-ready); }
 .model-issue { margin: 0 5px 6px; font-size: 11px; color: var(--model-warning); }
 .model-transfer { margin: 0 12px 8px; padding: 7px; border: 1px solid var(--line); border-radius: 3px; font-size: 11px; }
 .model-transfer p { margin: 0; overflow-wrap: anywhere; }
+.model-transfer .model-import-groups { margin-top: 5px; color: var(--muted); }
 .model-transfer progress { display: block; width: 100%; height: 7px; margin-top: 5px; accent-color: var(--active); }
 .model-transfer-errors { max-height: 80px; overflow: auto; margin: 5px 0 0; padding-left: 18px; color: var(--model-warning); }
 .model-import-results { max-height: 120px; overflow: auto; margin: 5px 0 0; padding-left: 18px; color: var(--muted); }

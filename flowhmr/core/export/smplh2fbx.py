@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from ..math.geometry import angle_axis_to_rotation_matrix
-from ...model_files import SMPLH_FILES, resolve_model
+from ..bodymodels.smplh_data import load_smplh_data, validated_smplh_reference
 from .fbx_utils import (
     animate_rotation_from_rotmats,
     animate_translation,
@@ -193,9 +193,9 @@ class SMPLH2FBX:
         smplh_model_path: str | Path | None = None,
         obj_template_path: Optional[str] = DEFAULT_OBJ_TEMPLATE_PATH,
     ):
-        with np.load(smplh_model_path or resolve_model(SMPLH_FILES["neutral"]), allow_pickle=True) as model:
-            self.smpl_data = {k: model[k] for k in ("v_template", "J_regressor", "shapedirs", "weights", "kintree_table")}
-            self.smpl_data["faces"] = model["f" if "f" in model else "faces"]
+        model = load_smplh_data(smplh_model_path or validated_smplh_reference()[1])
+        self.smpl_data = {k: model[k] for k in ("v_template", "J_regressor", "shapedirs", "weights", "kintree_table")}
+        self.smpl_data["faces"] = model["f"]
         self.mgr = create_manager()
 
         # Load UV coordinates from OBJ template

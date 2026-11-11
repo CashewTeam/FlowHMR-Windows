@@ -271,12 +271,16 @@ def _rotate_smplh_params_y180(poses_aa: np.ndarray, trans: np.ndarray):
     return poses_aa, trans
 
 
-def save_fbx(output: dict, length: int, output_path: str, save_npz: bool = True, export_mesh: bool = True):
+def save_fbx(output: dict, length: int, output_path: str, save_npz: bool = True, export_mesh: bool = True,
+             *, smpl_model_path=None, body_reference=None):
     """Write the SMPL-H npz and, if the Autodesk FBX SDK is installed, the .fbx."""
     from flowhmr.core.math.geometry import (
         rot6d_to_rotation_matrix,
         rotation_matrix_to_angle_axis,
     )
+    from flowhmr.model_files import smplh_reference, smplh_reference_path
+
+    body_reference = body_reference or smplh_reference() or "neutral"
 
     rot6d = output["rot6d"][0, :length]
     shapes = output["shapes"][0, :1]
@@ -298,7 +302,8 @@ def save_fbx(output: dict, length: int, output_path: str, save_npz: bool = True,
         "Rh": poses_np[:, 0, :],
         "mocap_framerate": 30,
         "num_frames": length,
-        "gender": "neutral",
+        "gender": body_reference,
+        "body_reference": body_reference,
     }
 
     if "foot_contacts" in output:
@@ -321,7 +326,7 @@ def save_fbx(output: dict, length: int, output_path: str, save_npz: bool = True,
         from flowhmr.core.export.smplh2fbx import SMPLH2FBX
     except ImportError:  # fbxsdkpy not installed: npz only
         return
-    with SMPLH2FBX() as smplh2fbx:
+    with SMPLH2FBX(smplh_model_path=smpl_model_path or smplh_reference_path(body_reference)) as smplh2fbx:
         smplh2fbx.convert_npz_to_fbx(params, output_path, export_mesh=export_mesh)
 
 
@@ -436,7 +441,7 @@ def pick_vis_frame_indices(total_frames: int, max_vis: int = 5) -> list:
 class V2MInferenceEngine:
 
     def __init__(self, pipeline, proc, sam_extractor, body_model,
-                 smpl_mesh, postprocess, device, staged_models=None):
+                 smpl_mesh, postprocess, device, staged_models=None, *, smpl_model_path=None, body_reference=None):
         self.pipeline = pipeline
         self.proc = proc
         self.sam_extractor = sam_extractor
@@ -444,8 +449,26 @@ class V2MInferenceEngine:
         self.smpl_mesh = smpl_mesh
         self.postprocess = postprocess
         self.device = device
+        self.smpl_model_path = smpl_model_path
+        self.body_reference = body_reference
         self._staged_models = staged_models or {}
         self._active_stage = None
+
+    @staticmethod
+    def _body_reference(smpl_model_path, body_reference):
+        from pathlib import Path
+
+        from flowhmr.core.bodymodels.smplh_data import validated_smplh_reference
+        from flowhmr.model_files import SMPLH_FILES, smplh_reference_path
+
+        if smpl_model_path is None:
+            return validated_smplh_reference(body_reference)
+        path = Path(smpl_model_path).absolute()
+        name = body_reference or next(
+            (name for name in SMPLH_FILES if path.name.casefold() == smplh_reference_path(name).name.casefold()),
+            "neutral",
+        )
+        return name, path
 
     def _activate_stage(self, stage=None):
         if not self._staged_models:
@@ -510,7 +533,7 @@ class V2MInferenceEngine:
                    validation_steps: int = None,
                    postprocess: bool = False,
                    smpl_model_path: str = None,
-                   j_regressor_path: str = None) -> "V2MInferenceEngine":
+                   j_regressor_path: str = None, *, body_reference=None) -> "V2MInferenceEngine":
         device_obj = torch.device(device)
 
         print("[V2MInferenceEngine] Loading models (lite mode, skip YOLOX & SAM3D)...")
@@ -523,9 +546,8 @@ class V2MInferenceEngine:
         else:
             model_cfg = load_yaml(model_cfg_path)
 
-        bp_kwargs = {}
-        if smpl_model_path is not None:
-            bp_kwargs["smpl_model_path"] = smpl_model_path
+        body_reference, smpl_model_path = cls._body_reference(smpl_model_path, body_reference)
+        bp_kwargs = {"smpl_model_path": str(smpl_model_path)}
         if j_regressor_path is not None:
             bp_kwargs["j_regressor_path"] = j_regressor_path
 
@@ -536,7 +558,7 @@ class V2MInferenceEngine:
         )
         print(f"  Pipeline loaded ({sum(p.numel() for p in pipe.parameters()):,} params)")
 
-        smpl_kw = {"model_path": smpl_model_path} if smpl_model_path else {}
+        smpl_kw = {"model_path": smpl_model_path}
         body_model = SMPLSkeleton(**smpl_kw).to(device_obj)
         print(f"  SMPL body model loaded")
 
@@ -561,6 +583,8 @@ class V2MInferenceEngine:
             smpl_mesh=smpl_mesh,
             postprocess=postprocess,
             device=device_obj,
+            smpl_model_path=smpl_model_path,
+            body_reference=body_reference,
         )
 
     @classmethod
@@ -568,7 +592,7 @@ class V2MInferenceEngine:
               validation_steps: int = None,
               postprocess: bool = False,
               sam_device_ids: list[int] | None = None,
-              sam_base_port: int = 29500) -> "V2MInferenceEngine":
+              sam_base_port: int = 29500, *, smpl_model_path=None, body_reference=None) -> "V2MInferenceEngine":
         device_obj = torch.device(device)
 
         print("[V2MInferenceEngine] Loading models...")
@@ -579,6 +603,7 @@ class V2MInferenceEngine:
             build_human_detector,
         )
         from flowhmr.core.bodymodels.smpl_skeleton import SMPLSkeleton, SMPLMesh
+        body_reference, smpl_model_path = cls._body_reference(smpl_model_path, body_reference)
 
         stage_models = False
         if device_obj.type == "cuda":
@@ -623,15 +648,16 @@ class V2MInferenceEngine:
         pipe = build_pipeline(
             model_cfg, device=str(resident), ckpt=ckpt,
             validation_steps=validation_steps,
+            smpl_model_path=str(smpl_model_path),
         )
         if stage_models:
             staged[StageName.GENERATION] = (pipe, None)
         print(f"  Pipeline loaded ({sum(p.numel() for p in pipe.parameters()):,} params)")
 
-        body_model = SMPLSkeleton().to(device_obj)
+        body_model = SMPLSkeleton(model_path=smpl_model_path).to(device_obj)
         print(f"  SMPL body model loaded")
 
-        smpl_mesh = SMPLMesh().to(device_obj)
+        smpl_mesh = SMPLMesh(model_path=smpl_model_path).to(device_obj)
         print(f"  SMPL mesh model loaded")
 
         if postprocess:
@@ -653,6 +679,8 @@ class V2MInferenceEngine:
             postprocess=postprocess,
             device=device_obj,
             staged_models=staged,
+            smpl_model_path=smpl_model_path,
+            body_reference=body_reference,
         )
 
     # Stage 1: Preprocess
@@ -975,14 +1003,16 @@ class V2MInferenceEngine:
             print(f"  [generation] Origin floor offset: {floor_y[0].item()*1000:.1f}mm")
 
         origin_fbx_path = os.path.join(sub_dir, f"{video_name}_seed{seed}_origin.fbx")
-        save_fbx(origin_output, length=T, output_path=origin_fbx_path, save_npz=True, export_mesh=export_mesh)
+        save_fbx(origin_output, length=T, output_path=origin_fbx_path, save_npz=True, export_mesh=export_mesh,
+                 smpl_model_path=self.smpl_model_path, body_reference=self.body_reference)
         _cb(progress_cb, 70, "Origin FBX saved")
 
         fbx_path = origin_fbx_path
         if self.postprocess is not None:
             output = self.postprocess.run(output)
             fbx_path = os.path.join(sub_dir, f"{video_name}_seed{seed}.fbx")
-            save_fbx(output, length=T, output_path=fbx_path, save_npz=True, export_mesh=export_mesh)
+            save_fbx(output, length=T, output_path=fbx_path, save_npz=True, export_mesh=export_mesh,
+                     smpl_model_path=self.smpl_model_path, body_reference=self.body_reference)
         _cb(progress_cb, 95, "Post-processed FBX saved")
 
         print(f"  [generation] Done ({time.time() - t0:.1f}s)")
@@ -1358,7 +1388,8 @@ class V2MInferenceEngine:
             origin_output["trans"][:, :, 1] -= floor_y[:, None]
 
         save_fbx(origin_output, length=T, output_path=origin_fbx_path,
-                 save_npz=True, export_mesh=True)
+                 save_npz=True, export_mesh=True, smpl_model_path=self.smpl_model_path,
+                 body_reference=self.body_reference)
         _pcb(StageName.GENERATION, 70, "Origin FBX saved")
 
         final_output = origin_output
@@ -1383,7 +1414,8 @@ class V2MInferenceEngine:
             _pcb(StageName.HAMER, 99, "正在保存手指精修结果")
         if self.postprocess is not None or hamer:
             save_fbx(final_output, length=T, output_path=final_fbx_path,
-                     save_npz=True, export_mesh=True)
+                     save_npz=True, export_mesh=True, smpl_model_path=self.smpl_model_path,
+                     body_reference=self.body_reference)
         if hamer:
             _pcb(StageName.HAMER, 100, "手指精修完成")
         else:

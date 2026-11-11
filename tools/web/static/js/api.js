@@ -3,7 +3,12 @@ import { appError, localize, message, serverMessage } from "./i18n.js";
 
 function httpError(payload, status, statusText = "") {
   const fallback = payload?.error || message("server.http_status", { status, statusText });
-  const i18n = serverMessage(payload?.error_code ?? payload?.code, payload?.error_params, fallback);
+  const code = payload?.error_code ?? payload?.code;
+  let params = payload?.error_params;
+  if (code === "body_reference_missing" && typeof params?.body === "string") {
+    params = { ...params, body: message(`view.${params.body}`, {}, params.body) };
+  }
+  const i18n = serverMessage(code, params, fallback);
   return Object.assign(new Error(localize(i18n)), { i18n, status });
 }
 

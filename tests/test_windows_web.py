@@ -57,7 +57,7 @@ class HistoryTest(unittest.TestCase):
 
 
 class ModelIntegrityTest(unittest.TestCase):
-    def test_base_and_hamer_download_actions_are_separate(self):
+    def test_download_all_and_individual_actions_only_offer_public_files(self):
         with TemporaryDirectory() as temporary, patch.object(files, "MODEL_ROOT", Path(temporary)):
             args = SimpleNamespace(device="cuda:0", ckpt=None, model_cfg=None)
             with (patch.object(server, "ARGS", args), patch.object(server.RUNTIME, "summary", return_value={"pending_restart": False}),
@@ -65,13 +65,31 @@ class ModelIntegrityTest(unittest.TestCase):
                   server.app.test_client() as client):
                 self.assertEqual(client.post("/api/models/download", json={}).status_code, 200)
                 core = start.call_args.args[0]
-                self.assertTrue(core)
-                self.assertNotIn("hamer", core)
+                self.assertEqual(set(core), set(sources.PUBLIC_ASSETS))
                 self.assertEqual(client.post("/api/models/download", json={"group": "hamer"}).status_code, 200)
                 optional = start.call_args.args[0]
                 self.assertEqual(set(optional), {"hamer"})
                 self.assertTrue(set(sources.HAMER_DIRECT_ASSETS) <= set(optional["hamer"]))
                 self.assertNotIn(sources.HAMER_ARCHIVE, optional["hamer"])
+                self.assertEqual(client.post("/api/models/download", json={"group": "vggt"}).status_code, 200)
+                self.assertEqual(set(start.call_args.args[0]), {"vggt"})
+                self.assertEqual(client.post("/api/models/download", json={"group": "all"}).status_code, 200)
+                self.assertEqual(set(start.call_args.args[0]), set(core) | {"hamer"})
+                for name in ("mano", "smplh", "not-a-model"):
+                    self.assertEqual(client.post("/api/models/download", json={"group": name}).status_code, 400)
+
+    def test_neutral_is_optional_if_one_body_reference_is_installed(self):
+        with (TemporaryDirectory() as temporary, patch.object(files, "MODEL_ROOT", Path(temporary)),
+              patch.object(files, "smplh_reference", return_value="female") as reference):
+            items = {item["id"]: item for item in server.model_inventory("cpu")["items"]}
+            self.assertEqual((items["smplh"]["required"], items["smplh"]["blocking"]), (False, False))
+            self.assertFalse(items["mano"]["blocking"])
+            self.assertEqual(items["mano"]["issue_code"], "model_mano_partial")
+            self.assertEqual(files.core_model_paths()[-2], files.resolve_model(files.SMPLH_FILES["female"]))
+            reference.return_value = None
+            missing = {item["id"]: item for item in server.model_inventory("cpu")["items"]}
+            self.assertTrue(missing["mano"]["blocking"])
+            self.assertFalse(missing["smplh"]["blocking"])
 
     def test_verification_uses_active_weights_and_preserves_edited_config(self):
         with TemporaryDirectory() as temporary:

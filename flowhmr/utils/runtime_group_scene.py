@@ -200,6 +200,7 @@ def _save_scene_motion(destination, tracks, people):
             payload[f"poses_{suffix}"] = poses
             payload[f"trans_{suffix}"] = translations.astype(np.float32)
             payload[f"betas_{suffix}"] = motion["betas"]
+            payload[f"body_reference_{suffix}"] = person["body_reference"]
     tmp = destination / "motion.npz.part"
     with tmp.open("wb") as stream:
         np.savez(stream, **payload)
@@ -218,7 +219,8 @@ def build_group_scene(destination, members, inspection, extractor, device, *, ch
         with np.load(directory / "input" / "input_bbox.npz", allow_pickle=False) as data:
             start, end = map(int, data["start_end"])
             boxes = data["bbox"]
-        stream, info = inspection.load(directory)
+        reference = job.get("body_reference") or "neutral"
+        stream, info = inspection.load(directory, body_reference=reference)
         if info["frames"] != end - start + 1 or len(boxes) != info["frames"]:
             raise ValueError("人物轨迹与原视频时间轴不一致。")
         with np.load(directory / "motion.npz", allow_pickle=False) as data:
@@ -227,7 +229,7 @@ def build_group_scene(destination, members, inspection, extractor, device, *, ch
             rest_root = all_joints[0, 0] - data["trans"][0]
         ground = (job.get("correction") or {}).get("floor_m", info["ground"]["height_m"])
         tracks.append(dict(job=job, directory=directory, range=(start, end), boxes=boxes,
-                           floor=ground, joints=all_joints, rest_root=rest_root))
+                           floor=ground, joints=all_joints, rest_root=rest_root, body_reference=reference))
     first = min(t["range"][0] for t in tracks)
     last = max(t["range"][1] for t in tracks)
     K, rt, camera = _shared_camera(video, entries, destination, (first, last), device, check, notify)
@@ -242,9 +244,12 @@ def build_group_scene(destination, members, inspection, extractor, device, *, ch
     scale = align_tracks(tracks)
     people = [dict(id=t["job"]["id"], person=t["job"]["selected_person"] + 1,
                    start=t["range"][0], end=t["range"][1], yaw=t["yaw"], offset=t["offset"],
+                   body_reference=t["body_reference"],
                    samples=len(t["samples"]), error_m=round(t["error"], 4)) for t in tracks]
     scene = dict(version=SCENE_VERSION, track_start=first, track_end=last, num_frames=last - first + 1,
                  fps=30, people=people, camera=camera, camera_scale=scale, ground_m=0.)
+    if len({track["body_reference"] for track in tracks}) == 1:
+        scene["body_reference"] = tracks[0]["body_reference"]
     check()
     _save_scene_motion(destination, tracks, people)
     tmp = destination / "scene.json.part"

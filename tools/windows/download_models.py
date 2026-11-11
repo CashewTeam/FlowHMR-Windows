@@ -108,12 +108,11 @@ def main():
     if not args.direct_only and not args.public_only:
         for repo, name, target, size, sha in sources.PERCEPTION_DOWNLOADS:
             fetch(sources.modelscope_file(repo, name), target, size, sha)
-    body = files.resolve_model(files.SMPLH_FILES["neutral"])
-    if not files.file_present(body):
-        entry, archive = sources.SMPLH_DOWNLOAD
-        print(f"SMPL-H: sign in at {sources.MANO_URL} and select '{entry}' ({archive}).\n"
-              f"Extract directly to: {files.MODEL_ROOT / files.SMPLH_FOLDER}\n"
-              f"Expected file: {body}", flush=True)
+    if files.smplh_reference() is None:
+        entry, archive = sources.MANO_DOWNLOAD
+        print(f"SMPL-H: sign in at {sources.MANO_URL} and download '{entry}' ({archive}).\n"
+              f"Extract into {files.MODEL_ROOT} or import the extracted folder in the desktop app.\n"
+              "An installed male or female body is sufficient. Extended SMPL+H neutral is optional.", flush=True)
     if failures:
         print("Unfinished downloads: " + ", ".join(failures), flush=True)
         return 1

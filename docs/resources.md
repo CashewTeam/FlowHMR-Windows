@@ -44,8 +44,9 @@ models/body_models/
 
 For the SMPL-H neutral model, select **Extended SMPL+H model** (AMASS,
 `smplh.tar.xz`) on the [MANO downloads page](https://mano.is.tue.mpg.de/download.php)
-and extract it into `models/body_models/smplh/`. It is used by the SMPL skeleton
-and mesh implementations. The joint regressor is a separate public
+and extract it into `models/body_models/smplh/`. Desktop inference can instead
+use an original male or female SMPL-H file from `mano_v1_2.zip`; see the
+[Windows guide](windows.md). The joint regressor is a separate public
 [GVHMR asset](https://raw.githubusercontent.com/zju3dv/GVHMR/main/hmr4d/utils/body_model/smpl_neutral_J_regressor.pt).
 
 **PHC simulation:**

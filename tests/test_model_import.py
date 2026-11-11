@@ -41,6 +41,7 @@ class ModelImportTests(unittest.TestCase):
         source.write_bytes(self.content)
         report = self.run_import()
         self.assertEqual(report["results"], [{"file": self.relative, "status": "installed"}])
+        self.assertEqual(report["groups"], ["joint-regressor"])
         self.assertEqual(report["bytes_done"], len(self.content))
         self.assertEqual(source.read_bytes(), self.destination.read_bytes())
 
@@ -128,6 +129,13 @@ class ModelImportTests(unittest.TestCase):
         (self.source / "readme.txt").write_text("Unrelated files stay where they are.", encoding="utf-8")
         report = self.run_import()
         self.assertEqual(report["error_code"], "no_models_found")
+        self.assertFalse(self.installer.root.exists())
+
+    def test_smplh_tar_requires_another_extraction(self):
+        (self.source / "smplh.tar").write_bytes(b"Not yet unpacked")
+        report = self.run_import()
+        self.assertEqual(report["error_code"], "extract_smplh_tar")
+        self.assertFalse(report["groups"])
         self.assertFalse(self.installer.root.exists())
 
 

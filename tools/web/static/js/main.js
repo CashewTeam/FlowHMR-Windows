@@ -135,7 +135,7 @@ function applyModelInfo(next) {
   $("optHamer").disabled = !hamerReady;
   setText($("hamerHint"), m(hamerReady ? "hamer.hint" : "hamer.missing_hint"));
   params?.refreshHamer();
-  if (variantsChanged) viewer.setBodyVariants(info?.body_variants);
+  if (variantsChanged) viewer.setBodyVariants(info?.body_variants, info?.body_reference);
 }
 
 initModelDialog(async () => {

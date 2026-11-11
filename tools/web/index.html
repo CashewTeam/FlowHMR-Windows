@@ -425,7 +425,7 @@
     <input type="text" class="input" id="modelDirectory" aria-label="模型文件夹路径" placeholder="正在读取路径…" readonly data-i18n-label="models.directory" data-i18n-placeholder="models.directory_reading">
     <button type="button" class="btn-secondary small" id="modelOpenFolder" disabled data-i18n="common.open_folder">打开文件夹</button>
   </div>
-  <p class="model-guide" id="modelImportGuide" data-i18n="models.guide">公开模型可自动下载。登录下载的官方包解压后，可选择文件夹导入。</p>
+  <p class="model-guide" id="modelImportGuide" data-i18n="models.guide">公开模型可单独或一键全部下载。导入已解压的文件夹时，程序会识别官方 SMPL-H、MANO 和支持的公开模型，并复制到正确位置。</p>
   <p class="model-guide hidden" id="modelManualGuide" data-i18n="models.manual_guide"></p>
   <div id="modelList" class="model-list"></div>
   <div id="modelTransfer" class="model-transfer hidden">
@@ -436,6 +436,7 @@
   <div id="modelImport" class="model-transfer hidden">
     <p id="modelImportLabel" role="status"></p>
     <progress id="modelImportBar" data-i18n-label="models.import_progress"></progress>
+    <p id="modelImportGroups" class="model-import-groups hidden"></p>
     <ul id="modelImportResults" class="model-import-results hidden"></ul>
   </div>
   <footer class="model-dialog-foot">
@@ -444,7 +445,7 @@
       <button type="button" class="btn-secondary small hidden" id="modelImportFolder" data-i18n="models.import" data-i18n-title="models.import_hint">导入已解压文件夹…</button>
       <button type="button" class="btn-secondary small" id="modelRefresh" data-i18n="common.refresh">刷新</button>
       <button type="button" class="btn-secondary small" id="modelVerify" title="逐字节校验已下载模型的 SHA-256；首次较慢，之后使用缓存。" data-i18n-title="models.hash_hint" data-i18n="models.verify">校验哈希</button>
-      <button type="button" class="btn-primary small hidden" id="modelDownload" data-i18n="models.download_missing">下载缺失模型</button>
+      <button type="button" class="btn-primary small hidden" id="modelDownload" data-i18n="models.download_all">下载全部公开模型</button>
       <button type="button" class="btn-secondary small hidden" id="modelDownloadStop" data-i18n="download.stop">停止下载</button>
     </div>
   </footer>

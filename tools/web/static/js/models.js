@@ -1,6 +1,6 @@
 import { $, el, formatBytes, show } from "./utils.js";
 import { getModelDownload, getModelImport, startModelDownload, startModelImport, stopModelDownload, verifyModels } from "./api.js";
-import { localize, message as m, serverMessage, setAttr, setText, t } from "./i18n.js";
+import { getLanguage, localize, message as m, serverMessage, setAttr, setText, t } from "./i18n.js";
 
 const active = (state) => state?.status === "running" || state?.status === "stopping";
 const sizeLabel = (n) => n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GiB` : n < 1024 ? `${n} B` : formatBytes(n);
@@ -16,11 +16,11 @@ export function initModelDialog(refreshInventory) {
   const refreshButton = $("modelRefresh"), status = $("modelCheckStatus"), verifyButton = $("modelVerify");
   const downloadButton = $("modelDownload"), stopButton = $("modelDownloadStop");
   const importButton = $("modelImportFolder"), importBox = $("modelImport"), importLabel = $("modelImportLabel");
-  const importBar = $("modelImportBar"), importResults = $("modelImportResults");
+  const importBar = $("modelImportBar"), importGroups = $("modelImportGroups"), importResults = $("modelImportResults");
   const transferBox = $("modelTransfer"), transferLabel = $("modelTransferLabel");
   const transferBar = $("modelTransferBar"), transferErrors = $("modelTransferErrors");
   let inventory = null, transfer = null, imported = null, busy = false, pollTimer = null, version = 0;
-  let hamerButton = null;
+  const rowDownloads = new Map();
   const importing = () => imported?.state === "running";
   const working = () => active(transfer) || importing();
   const groupName = (id, fallback) => m(`model_name.${id}`, {}, fallback ?? id);
@@ -32,7 +32,8 @@ export function initModelDialog(refreshInventory) {
     imported = next.import ?? null;
     directory.value = inventory.directory;
     folderButton.disabled = false;
-    hamerButton = null;
+    rowDownloads.clear();
+    const downloadable = new Set(inventory.downloadable);
     list.replaceChildren(...inventory.items.map((item) => {
       const row = el("div", "model-item");
       row.dataset.model = item.id;
@@ -42,7 +43,24 @@ export function initModelDialog(refreshInventory) {
       const name = el("span", "model-name");
       name.append(el("strong", "", groupName(item.id, item.name)),
         el("span", "model-role", m(item.required ? "models.required" : "models.optional")));
-      heading.append(name, badge);
+      const actions = el("div", "model-row-actions");
+      actions.append(badge);
+      if (downloadable.has(item.id)) {
+        const bytes = inventory.download_sizes?.[item.id];
+        const download = el("button", "btn-secondary small", bytes > 0
+          ? m("models.download_row_size", { bytes: sizeLabel(bytes) })
+          : m("models.download_row"));
+        download.type = "button";
+        download.dataset.modelDownloadGroup = item.id;
+        setAttr(download, "aria-label", m("models.download_one", { model: groupName(item.id, item.name) }));
+        if (bytes > 0) setAttr(download, "title", m("download.up_to", { bytes: sizeLabel(bytes) }));
+        download.addEventListener("click", () => {
+          if (!working()) void changeDownload(() => startModelDownload(item.id));
+        });
+        rowDownloads.set(item.id, download);
+        actions.append(download);
+      }
+      heading.append(name, actions);
       row.append(heading);
       if (item.status !== "ready") {
         if (item.archive) {
@@ -50,6 +68,10 @@ export function initModelDialog(refreshInventory) {
           source.append(el("span", "", m("models.archive")), el("strong", "", item.archive.entry),
             el("code", "", item.archive.name));
           row.append(source);
+          if (item.id === "smplh") {
+            if (!item.required) row.append(el("p", "model-install model-extract-hint", m("models.smplh_optional")));
+            row.append(el("p", "model-install model-extract-hint", m("models.smplh_extract_hint")));
+          }
         }
         const help = el("div", "model-install");
         if (item.status === "missing") {
@@ -81,14 +103,6 @@ export function initModelDialog(refreshInventory) {
           row.append(damaged);
         }
         if (item.issue || item.issue_code) row.append(el("p", "model-issue", serverMessage(item.issue_code, item.issue_params, item.issue)));
-        if (item.id === "hamer" && inventory.hamer_download_bytes > 0) {
-          hamerButton = el("button", "btn-secondary small");
-          hamerButton.type = "button";
-          hamerButton.addEventListener("click", () => changeDownload(() => startModelDownload("hamer")));
-          const controls = el("div", "model-install");
-          controls.append(hamerButton);
-          row.append(controls);
-        }
       }
       return row;
     }));
@@ -110,14 +124,8 @@ export function initModelDialog(refreshInventory) {
     downloadButton.disabled = busy || importing();
     show(stopButton, running);
     stopButton.disabled = busy || transfer?.status === "stopping";
-    const resumable = transfer?.status === "cancelled";
-    setText(downloadButton, m(resumable && transfer.group !== "hamer" ? "download.resume" : "models.download_missing"));
     setAttr(downloadButton, "title", inventory?.download_bytes ? m("download.up_to", { bytes: sizeLabel(inventory.download_bytes) }) : "");
-    if (hamerButton) {
-      hamerButton.disabled = busy || working();
-      setText(hamerButton, m(resumable && transfer.group === "hamer" ? "download.resume" : "models.download_hamer",
-        { bytes: sizeLabel(inventory.hamer_download_bytes) }));
-    }
+    for (const button of rowDownloads.values()) button.disabled = busy || working();
   }
 
   function renderTransfer() {
@@ -155,6 +163,11 @@ export function initModelDialog(refreshInventory) {
       importBar.value = imported.bytes_done;
     } else importBar.removeAttribute("value");
     const results = imported?.results ?? [];
+    const recognized = imported?.groups ?? [];
+    show(importGroups, recognized.length > 0 && !running);
+    setText(importGroups, recognized.length ? m("models.import_recognized", {
+      models: () => new Intl.ListFormat(getLanguage()).format(recognized.map((id) => localize(group(id)))),
+    }) : "");
     const visible = results.length > 0 && !running;
     show(importResults, visible);
     if (visible) {
@@ -294,7 +307,7 @@ export function initModelDialog(refreshInventory) {
   refreshButton.addEventListener("click", refresh);
   verifyButton.addEventListener("click", verifyHashes);
   downloadButton.addEventListener("click", () => {
-    if (!working()) void changeDownload(() => startModelDownload());
+    if (!working()) void changeDownload(() => startModelDownload("all"));
   });
   stopButton.addEventListener("click", () => {
     if (active(transfer)) void changeDownload(() => stopModelDownload(transfer.id));

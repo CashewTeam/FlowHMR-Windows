@@ -22,6 +22,11 @@ def blend_shapes(betas, shape_disps):
     # Displacement[b, m, k] = sum_{l} betas[b, l] * shape_disps[m, k, l]
     # i.e. Multiply each shape displacement by its corresponding beta and
     # then sum them.
+    # MANO v1.2 has 10 licensed shape modes; FlowHMR predicts 16 coefficients.
+    # Keep the full motion vector and apply only the modes the reference has.
+    if betas.shape[-1] != shape_disps.shape[-1]:
+        count = min(betas.shape[-1], shape_disps.shape[-1])
+        betas, shape_disps = betas[..., :count], shape_disps[..., :count]
     blend_shape = torch.einsum("bl,mkl->bmk", [betas, shape_disps])
     return blend_shape
 

@@ -1,6 +1,8 @@
 """Resolve local model files without importing or loading any model runtime."""
 
+from functools import lru_cache
 from pathlib import Path
+from zipfile import BadZipFile, ZipFile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +25,7 @@ SMPLH_FILES = {
     "female": f"{MANO_BUNDLE}/models/SMPLH_female.pkl",
     "male": f"{MANO_BUNDLE}/models/SMPLH_male.pkl",
 }
+SMPLH_REFERENCE_ORDER = ("neutral", "male", "female")
 JOINT_REGRESSOR = "body_models/smpl_neutral_J_regressor.pt"
 HAMER_FILES = ("hamer/hamer.ckpt", "hamer/model_config.yaml", "hamer/mano_mean_params.npz")
 MODEL_DESTINATIONS = (FLOWHMR_CKPT, FLOWHMR_CONFIG, YOLOX, *SAM3D_FILES, VGGT,
@@ -50,6 +53,52 @@ def resolve_model(relative):
     return MODEL_ROOT / relative
 
 
+@lru_cache(maxsize=12)
+def _smplh_header_ok(path, size, modified_ns, inode):
+    # This is a quick format check for the Models dialog, not a geometry load.
+    # Include the file stamp in the cache so importing a missing model refreshes
+    # readiness without restarting the application.
+    if not (1 << 20) <= size <= (256 << 20):
+        return False
+    try:
+        if path.suffix.lower() == ".pkl":
+            with path.open("rb") as stream:
+                header = stream.read(64)
+                stream.seek(-1, 2)
+                return header.startswith(b"\x80\x02}") and b"numpy" in header and stream.read(1) == b"."
+        with ZipFile(path) as archive:
+            names = set(archive.namelist())
+            return ({"v_template.npy", "shapedirs.npy", "posedirs.npy", "J_regressor.npy",
+                     "kintree_table.npy", "weights.npy"} <= names
+                    and bool(names & {"f.npy", "faces.npy"}))
+    except (OSError, BadZipFile):
+        return False
+
+
+def smplh_available(name):
+    """Whether the installed official model looks usable without loading its arrays."""
+    if name not in SMPLH_FILES:
+        return False
+    path = resolve_model(SMPLH_FILES[name])
+    if not file_present(path):
+        return False
+    try:
+        info = path.stat()
+    except OSError:
+        return False
+    return _smplh_header_ok(path, info.st_size, info.st_mtime_ns, info.st_ino)
+
+
+def smplh_reference():
+    """Choose the reference used for new motion, preserving the original neutral default."""
+    return next((name for name in SMPLH_REFERENCE_ORDER if smplh_available(name)), None)
+
+
+def smplh_reference_path(name=None):
+    """Resolve a fixed reference or the best installed model for a new job."""
+    return resolve_model(SMPLH_FILES[name or smplh_reference() or "neutral"])
+
+
 def sam3d_paths():
     return tuple(map(resolve_model, SAM3D_FILES))
 
@@ -60,9 +109,9 @@ def flowhmr_paths(ckpt=None, config=None):
     return checkpoint, config
 
 
-def core_model_paths(ckpt=None, config=None):
+def core_model_paths(ckpt=None, config=None, *, body_reference=None):
     return (*flowhmr_paths(ckpt, config), resolve_model(YOLOX), *sam3d_paths(), resolve_model(VGGT),
-            resolve_model(SMPLH_FILES["neutral"]), resolve_model(JOINT_REGRESSOR))
+            smplh_reference_path(body_reference), resolve_model(JOINT_REGRESSOR))
 
 
 def missing_model_paths(paths):

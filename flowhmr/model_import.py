@@ -332,11 +332,12 @@ class ModelImporter:
 
     @staticmethod
     def _initial(state):
-        return {"state": state, "phase": "scan" if state == "running" else None, "results": [],
+        return {"state": state, "phase": "scan" if state == "running" else None, "results": [], "groups": [],
                 "bytes_done": 0, "bytes_total": 0, "current_file": None, "error_code": None}
 
     def _snapshot(self):
-        return {**self._state, "results": [dict(item) for item in self._state["results"]]}
+        return {**self._state, "groups": list(self._state["groups"]),
+                "results": [dict(item) for item in self._state["results"]]}
 
     @property
     def active(self):
@@ -374,8 +375,13 @@ class ModelImporter:
             self._fail(_error_code(error, reading=True))
             return
         if not matches:
-            self._fail("no_models_found")
+            try:
+                pending_tar = (source / "smplh.tar").is_file()
+            except OSError:
+                pending_tar = False
+            self._fail("extract_smplh_tar" if pending_tar else "no_models_found")
             return
+        self._update(groups=[group for group, relatives in _GROUPS.items() if matches.keys() & set(relatives)])
         try:
             with _target_lock(self.root):
                 self._discard_interrupted_copies()

@@ -195,8 +195,9 @@ def _install_group(assets, progress, check):
         check()
         try:
             path = download_asset(asset, progress, check)
-        except DownloadError:
-            if asset not in sources.HAMER_DIRECT_ASSETS:
+        except DownloadError as error:
+            if (asset not in sources.HAMER_DIRECT_ASSETS
+                    or error.code in ("transfer_disk", "transfer_permission", "transfer_unsafe_path")):
                 raise
             _install_hamer_archive(progress, check)
             return  # The official archive supplies any remaining files.
@@ -239,7 +240,7 @@ class ModelDownloads:
         with self._lock:
             return self._snapshot()
 
-    def start(self, plan):
+    def start(self, plan, *, scope=None):
         with self._lock:
             if self._state["status"] in ACTIVE_DOWNLOAD:
                 return self._snapshot()
@@ -247,7 +248,7 @@ class ModelDownloads:
                 self._state = {"status": "idle", "id": None, "errors": []}
                 return self._snapshot()
             self._cancel.clear()
-            self._state = {"status": "running", "id": uuid4().hex, "group": None,
+            self._state = {"status": "running", "id": uuid4().hex, "group": None, "scope": scope,
                            "index": 0, "count": len(plan), "phase": "download", "file": "",
                            "bytes": 0, "total": 0, "errors": []}
             Thread(target=self._run, args=(plan,), daemon=True, name="flowhmr-model-downloads").start()

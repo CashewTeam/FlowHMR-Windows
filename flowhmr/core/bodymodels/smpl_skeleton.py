@@ -2,10 +2,12 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import os
+from pathlib import Path
 from .lbs_function import blend_shapes, batch_rigid_transform, batch_rigid_transform_global, lbs, batch_rodrigues, transform_mat
 from ..math.geometry import angle_axis_to_rotation_matrix, rotation_matrix_to_angle_axis
 from ..math.geometry import rot6d_to_rotation_matrix
-from ...model_files import SMPLH_FILES, resolve_model
+from ...model_files import SMPLH_FILES, smplh_reference_path
+from .smplh_data import load_smplh_data, validated_smplh_reference
 
 
 def to_tensor(array, dtype=torch.float32, device=torch.device("cpu")):
@@ -31,12 +33,17 @@ def read_pickle(name):
 
 def load_model_data(model_path):
     if model_path is None:
-        model_path = resolve_model(SMPLH_FILES["neutral"])
+        return load_smplh_data(validated_smplh_reference()[1])
+    path = Path(model_path).absolute()
+    if (path in {smplh_reference_path(name).absolute() for name in SMPLH_FILES}
+            or path.name.casefold() in {"smplh_male.pkl", "smplh_female.pkl"}):
+        return load_smplh_data(path)
+    # Retain the explicitly supplied custom body formats used by research tools.
     model_path = os.path.abspath(model_path)
     assert os.path.exists(model_path), "Path {} does not exist!".format(model_path)
     if model_path.endswith(".npz"):
-        data = np.load(model_path)
-        data = dict(data)
+        with np.load(model_path, allow_pickle=False) as archive:
+            data = dict(archive)
     elif model_path.endswith(".pkl"):
         data = read_pickle(model_path)
     return data

@@ -819,13 +819,15 @@ export function initViewer(preview) {
   });
 
   return {
-    setBodyVariants(names = ["neutral"]) {
+    setBodyVariants(names = ["neutral"], preferred = "neutral") {
       const available = new Set(names);
       for (const option of bodySelect.options) option.disabled = !available.has(option.value);
       const saved = state.meta ? state.bodyVariant : localStorage.getItem(BODY_STORAGE);
-      bodySelect.value = available.has(saved) ? saved : "neutral";
+      bodySelect.value = available.has(saved) ? saved : available.has(preferred) ? preferred : names[0] ?? "";
       show("bodyVariantRow", available.size > 1);
-      if (state.meta && bodySelect.value !== state.bodyVariant) bodySelect.dispatchEvent(new Event("change"));
+      if (state.meta && bodySelect.value && bodySelect.value !== state.bodyVariant) {
+        bodySelect.dispatchEvent(new Event("change"));
+      }
     },
     get bodyVariant() { return state.meta ? state.bodyVariant : bodySelect.value || "neutral"; },
     seekSourceFrame(frame) {
@@ -845,12 +847,12 @@ export function initViewer(preview) {
       const load = loadController = new AbortController();
       const members = groupScene?.people ?? [{ id: jobId }];
       const inspections = members.map((p) => api.getInspection(p.id, load.signal).catch(() => null));
-      let variant = bodySelect.value || "neutral";
+      let variant = bodySelect.value || "source";
       let data;
       try {
         data = await Promise.all(members.map((p) => loadActor(p, variant, load.signal))).catch((error) => {
-          if (load.signal.aborted || variant === "neutral") throw error;
-          variant = "neutral";
+          if (load.signal.aborted || variant === "source") throw error;
+          variant = "source";
           return Promise.all(members.map((p) => loadActor(p, variant, load.signal)));
         });
       } catch (error) {
@@ -870,7 +872,8 @@ export function initViewer(preview) {
       state.frame = -1;
       state.acc = 0;
       state.lastT = 0;
-      state.bodyVariant = bodySelect.value = variant;
+      state.bodyVariant = bodySelect.value = variant === "source"
+        ? groupScene?.body_reference ?? data[0].meta.body_reference ?? "neutral" : variant;
       bodySelect.disabled = false;
       syncSkeletonDisplay();
 
