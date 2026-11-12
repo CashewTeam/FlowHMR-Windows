@@ -1,3 +1,5 @@
+param([int]$ExpectedPid = 0)
+
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $stateFile = Join-Path $projectRoot 'logs\web-process.json'
@@ -5,6 +7,13 @@ if (-not (Test-Path -LiteralPath $stateFile)) { Write-Host 'No recorded server.'
 $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
 $rootId = [int]$state.pid
 $port = [int]$state.port
+if ($ExpectedPid -and $rootId -ne $ExpectedPid) {
+    throw 'The recorded FlowHMR server changed. No process was stopped.'
+}
+if (-not (Get-Process -Id $rootId -ErrorAction SilentlyContinue)) {
+    Write-Host 'The recorded server has already stopped.'
+    exit 0
+}
 $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $rootId"
 if ($null -eq $processInfo) { Write-Host 'The recorded server has already stopped.'; exit 0 }
 . (Join-Path $PSScriptRoot 'desktop-runtime.ps1')

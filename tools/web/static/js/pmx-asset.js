@@ -440,6 +440,7 @@ export async function loadPmxAsset(files, selectedFile, { signal, readTexture, u
 
     const rest = restPose(mesh, data, unitScale);
     return {
+      kind: "pmx",
       name: mesh.name,
       path: model.path,
       mesh,

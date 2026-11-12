@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 from importlib.metadata import version
+import json
 import os
 from pathlib import Path
 import shutil
@@ -13,8 +14,12 @@ import tempfile
 import zipfile
 
 if __package__:
+    from .desktop_runtime_build import adapt_winforms, stage_dotnet_runtime
+    from .desktop_update import PACKAGE, UPDATE_INFO, VERSION_FILE, read_version, release_version
     from .install_fbx import WHEEL_NAME as FBX_WHEEL_NAME, binding_from_wheel
 else:
+    from desktop_runtime_build import adapt_winforms, stage_dotnet_runtime
+    from desktop_update import PACKAGE, UPDATE_INFO, VERSION_FILE, read_version, release_version
     from install_fbx import WHEEL_NAME as FBX_WHEEL_NAME, binding_from_wheel
 
 
@@ -114,6 +119,8 @@ def copy_runtime(target, prerequisites, *, bundle_cuda=False):
     shutil.copytree(base, target, ignore=base_ignore)
     target_site = target / "Lib/site-packages"
     shutil.copytree(site, target_site, ignore=site_ignore)
+    adapt_winforms(target_site)
+    stage_dotnet_runtime(target / "dotnet", prerequisites)
     (target_site / "fbx.pyd").write_bytes(fbx_binding)
     (target_site / "flowhmr_yolox.pth").write_text("../../../third_party/YOLOX\n", encoding="ascii")
     prereq_dir = target / "prerequisites"
@@ -170,7 +177,9 @@ def adapt_sam_windows_paths(destination):
     head.write_text(code.replace(original, replacement), encoding="utf-8")
 
 
-def stage_release(destination, prerequisites, dinov3_source, *, bundle_cuda=False):
+def stage_release(destination, prerequisites, dinov3_source, *, bundle_cuda=False, version=None):
+    if version is not None:
+        release_version(version)
     files = source_files()
     destination.mkdir(parents=True, exist_ok=False)
     copy_files(ROOT, destination, files)
@@ -191,6 +200,8 @@ def stage_release(destination, prerequisites, dinov3_source, *, bundle_cuda=Fals
     shutil.copytree(ROOT / "third_party/hamer_inference", destination / "third_party/hamer_inference",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     copy_runtime(destination / "runtime", prerequisites, bundle_cuda=bundle_cuda)
+    if version is not None and not bundle_cuda:
+        (destination / VERSION_FILE).write_text(version + "\n", encoding="ascii")
     subprocess.run(("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                     str(ROOT / "tools/windows/build-exe.ps1"), "-Destination", str(destination / "FlowHMR.exe")),
                    cwd=ROOT, check=True)
@@ -270,6 +281,10 @@ def pack_release(stage, output, ffmpeg_source):
                            cwd=ROOT, check=True)
     shutil.copy2(ROOT / "docs/release-windows.md", output / "README-Windows.md")
     shutil.copy2(ffmpeg_source, output / FFMPEG_SOURCE_NAME)
+    if not bundle_cuda and (build_version := read_version(stage)) is not None:
+        (output / UPDATE_INFO).write_text(json.dumps({"version": build_version, "package": PACKAGE,
+                                                      "sha256": checksum(output / PACKAGE)}, indent=2) + "\n",
+                                          encoding="utf-8")
     (output / "SHA256SUMS.txt").write_text(
         "".join(f"{checksum(p)}  {p.name}\n" for p in sorted(output.iterdir()) if p.is_file()), encoding="utf-8",
     )
@@ -284,6 +299,7 @@ def main():
     stage.add_argument("--prerequisites", type=Path, required=True)
     stage.add_argument("--dinov3-source", type=Path, required=True)
     stage.add_argument("--bundle-cuda", action="store_true", help="include the current cu128 environment for an offline bundle")
+    stage.add_argument("--version", help="Windows release version (X.Y.Z) for the online portable updater")
     pack = sub.add_parser("pack")
     pack.add_argument("stage", type=Path)
     pack.add_argument("output", type=Path)
@@ -292,7 +308,7 @@ def main():
     sys.path.insert(0, str(ROOT))
     if args.action == "stage":
         stage_release(args.destination.resolve(), args.prerequisites.resolve(), args.dinov3_source.resolve(),
-                      bundle_cuda=args.bundle_cuda)
+                      bundle_cuda=args.bundle_cuda, version=args.version)
     else:
         pack_release(args.stage.resolve(), args.output.resolve(), args.ffmpeg_source.resolve())
 

@@ -22,8 +22,11 @@ import webview
 
 ROOT = Path(__file__).resolve().parents[2]
 TITLE = "FlowHMR"
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from desktop_downloads import configure_downloads
 from desktop_messages import MESSAGES, model_archive_filter, read_language, save_language
+from desktop_update import DesktopUpdate
 
 
 class _JobBasicLimits(ctypes.Structure):
@@ -122,28 +125,6 @@ h1 {{font-size:18px;margin:0 0 12px}} p {{margin:0;color:#bbb;line-height:1.6}}
 </style><main><h1>{escape(heading)}</h1><p>{escape(detail)}</p></main></html>"""
 
 
-def _hide_download_flyout(_sender, args):
-    # pywebview still chooses the destination. Handled only hides WebView2's UI.
-    args.Handled = True
-
-
-def _on_webview2_ready(sender, args):
-    if args.IsSuccess:
-        sender.CoreWebView2.DownloadStarting += _hide_download_flyout
-
-
-def configure_downloads(window):
-    # before_show runs on the window's UI thread, before navigating to FlowHMR.
-    control = getattr(window.native, "webview", None)
-    if not hasattr(control, "CoreWebView2"):
-        return
-    core = control.CoreWebView2
-    if core is None:
-        control.CoreWebView2InitializationCompleted += _on_webview2_ready
-    else:
-        core.DownloadStarting += _hide_download_flyout
-
-
 def open_models_folder():
     directory = ROOT / "models"
     directory.mkdir(exist_ok=True)
@@ -156,8 +137,8 @@ def open_runtime_folder():
     os.startfile(directory)
 
 
-def expose_model_pickers(window, port, backend):
-    """Allow only the local FlowHMR page to open the model selection dialogs."""
+def create_file_picker(window, port, backend):
+    """Open one native picker at a time for the local FlowHMR page."""
     origin = f"http://127.0.0.1:{port}"
     last_directory = Path.home() / "Downloads"
     picker_lock = threading.Lock()
@@ -183,6 +164,12 @@ def expose_model_pickers(window, port, backend):
         finally:
             picker_lock.release()
 
+    return choose
+
+
+def expose_model_pickers(window, port, backend, choose):
+    origin = f"http://127.0.0.1:{port}"
+
     def choose_model_folder():
         return choose(webview.FileDialog.FOLDER)
 
@@ -190,7 +177,7 @@ def expose_model_pickers(window, port, backend):
         return choose(webview.FileDialog.OPEN, (model_archive_filter(),))
 
     def choose_character_file():
-        path = choose(webview.FileDialog.OPEN, ("PMX FBX (*.pmx;*.fbx)",))
+        path = choose(webview.FileDialog.OPEN, ("PMX VRM FBX (*.pmx;*.vrm;*.fbx)",))
         if not path:
             return None
         payload = json.dumps({"file": path}).encode("utf-8")
@@ -225,7 +212,45 @@ def expose_language_preference(window, port, backend):
     window.expose(get_ui_language, set_ui_language)
 
 
-def connect(window, port, backend):
+def expose_updates(window, port, backend, trial_ready, choose):
+    updater = DesktopUpdate(ROOT)
+
+    def local_page():
+        current = urlsplit(window.get_current_url() or "")
+        return not backend.closed.is_set() and (current.scheme, current.netloc) == ("http", f"127.0.0.1:{port}")
+
+    def get_update_state():
+        return updater.snapshot() if local_page() else None
+
+    def check_updates(manual=False):
+        return updater.check(manual is True) if local_page() else None
+
+    def download_update():
+        return updater.download() if local_page() else None
+
+    def stop_update():
+        return updater.cancel() if local_page() else None
+
+    def manual_update():
+        if not local_page() or not updater.current:
+            return None
+        path = choose(webview.FileDialog.OPEN, ("FlowHMR ZIP (*.zip)",))
+        return updater.stage_local(path) if path else updater.snapshot()
+
+    def select_update_version(version):
+        return updater.select_version(version) if local_page() else None
+
+    def confirm_update_boot():
+        if trial_ready is None or trial_ready.is_set() or not local_page():
+            return
+        (updater.work / "applying/healthy").touch(exist_ok=True)
+        trial_ready.set()
+
+    window.expose(get_update_state, check_updates, download_update, stop_update, manual_update,
+                  select_update_version, confirm_update_boot)
+
+
+def connect(window, port, backend, *, trial=False):
     if backend.closed.is_set():
         return
     script = ROOT / "tools/windows/start-web.ps1"
@@ -244,15 +269,23 @@ def connect(window, port, backend):
             )
         if backend.closed.is_set():
             return
+        if result.returncode == 20:
+            logging.warning("The previous FlowHMR service could not be replaced. See desktop-launcher.log.")
+            if not trial:
+                window.load_html(status_page("server_busy"))
+            return False
         if result.returncode:
             raise RuntimeError(f"FlowHMR backend exited with code {result.returncode}")
         window.load_url(f"http://127.0.0.1:{port}/")
         logging.info("Loaded local FlowHMR at port %d", port)
+        return True
     except Exception:
         if backend.closed.is_set():
             return
         logging.exception("Failed to connect to FlowHMR")
-        window.load_html(status_page("failed"))
+        if not trial:
+            window.load_html(status_page("failed"))
+        return False
 
 
 def expose_runtime_restart(window, port, backend):
@@ -380,15 +413,29 @@ def main():
         )
         window.expose(open_models_folder)
         window.expose(open_runtime_folder)
-        expose_model_pickers(window, port, backend)
+        choose_file = create_file_picker(window, port, backend)
+        expose_model_pickers(window, port, backend, choose_file)
         expose_language_preference(window, port, backend)
         expose_runtime_restart(window, port, backend)
-        window.events.before_show += configure_downloads
-        window.events.shown += lambda: threading.Thread(target=connect, args=(window, port, backend), daemon=True).start()
+        trial_ready = threading.Event() if os.environ.get("FLOWHMR_UPDATE_TRIAL") == "1" else None
+        trial_failed = threading.Event()
+        expose_updates(window, port, backend, trial_ready, choose_file)
+
+        def start_workspace():
+            opened = connect(window, port, backend, trial=trial_ready is not None)
+            if trial_ready is not None and (not opened or not trial_ready.wait(45)) and not backend.closed.is_set():
+                logging.error("Updated FlowHMR did not open the local workspace. Restoring the previous version.")
+                trial_failed.set()
+                window.destroy()
+
+        window.events.before_show += lambda: configure_downloads(window, port, ROOT / ".cache/desktop-export-directory.txt")
+        window.events.shown += lambda: threading.Thread(target=start_workspace, daemon=True).start()
         window.events.closed += backend.close
         webview.start(gui="edgechromium", private_mode=False,
                       storage_path=os.fspath(ROOT / ".cache/webview2"),
                       icon=os.fspath(ROOT / "assets/flowhmr.ico"))
+        if trial_failed.is_set():
+            raise SystemExit(1)
     finally:
         if backend is not None:
             backend.close()

@@ -274,8 +274,15 @@ class SMPLH2FBX:
         reference = first_pose != "none"
         reference_rotations = reference_translation = None
         if reference:
-            reference_rotations = basis.transpose(0, 2, 1) @ _reference_rotations(joints, rot_mats[0, 0], first_pose) @ basis
+            reference_root = np.eye(3) if first_pose == "t" else rot_mats[0, 0]
+            reference_rotations = basis.transpose(0, 2, 1) @ _reference_rotations(joints, reference_root, first_pose) @ basis
             reference_translation = offsets[0] + np.array([trans[0, 0], floor_offset[1], trans[0, 2]])
+        if profile == "maya_adv":
+            # The ADV motion library zeroes the rotation channels at frame -1.
+            # Put the T pose in the pre-rotations and compensate the animation keys.
+            local_rest = local_rest @ reference_rotations
+            rotations = reference_rotations.transpose(0, 2, 1) @ rotations
+            reference_rotations = np.broadcast_to(np.eye(3), reference_rotations.shape)
         parent_node = None
         if number is not None:
             parent_node = fbx.FbxNode.Create(scene, f"Person {number}")
@@ -285,6 +292,8 @@ class SMPLH2FBX:
             from .fbx_profiles import mixamo_bone_names
 
             names, tip_names = mixamo_bone_names(FBX_JOINT_NAMES, tips)
+        elif profile == "maya_adv":
+            names = tuple("Spine3" if name == "Spine2" else name for name in names)
         skel_nodes = build_skeleton_nodes(self.mgr, scene, local_offsets, parents, names,
                                           rest_rotations=local_rest, tip_lengths=tips, tip_names=tip_names, parent_node=parent_node,
                                           reference_name="FlowHMR Motion" if number is None else f"FlowHMR Person {number}")
@@ -327,6 +336,7 @@ class SMPLH2FBX:
                     key = channel.KeyAdd(time)[0]
                     channel.KeySetValue(key, value)
                     channel.KeySetInterpolation(key, fbx.FbxAnimCurveDef.EInterpolationType.eInterpolationConstant)
+                    channel.KeySetConstantMode(key, fbx.FbxAnimCurveDef.EConstantMode.eConstantStandard)
                 channel.KeyModifyEnd()
 
             step_keys(curve, sorted(keys.items()))
@@ -349,22 +359,28 @@ class SMPLH2FBX:
             raise ValueError("Invalid FBX timeline")
         if first_pose not in ("none", "t", "a"):
             raise ValueError("Invalid FBX reference pose")
-        if profile not in ("flowhmr", "mixamo", "metahuman"):
+        if profile not in ("flowhmr", "mixamo", "mixamo_iclone", "metahuman", "maya_adv"):
             raise ValueError("Unknown FBX skeleton profile")
-        if profile == "metahuman":
+        if profile in ("metahuman", "mixamo_iclone") or (profile == "mixamo" and template_path is not None):
             if export_mesh or variant_path is not None or first_pose != "none" or len(motions) != 1 or not template_path:
-                raise ValueError("MetaHuman export needs one person, a body FBX template and animation-only settings")
-            from .fbx_profiles import write_metahuman_animation
+                raise ValueError("Template export needs one person, a body FBX template and animation-only settings")
+            from .fbx_profiles import write_metahuman_animation, write_mixamo_animation
 
             _, start, motion = motions[0]
             poses, trans, _, mesh, parents, joints = self._motion_geometry(motion)
-            write_metahuman_animation(
+            write = write_metahuman_animation if profile == "metahuman" else write_mixamo_animation
+            options = {"source_names": FBX_JOINT_NAMES} if profile != "metahuman" else {}
+            write(
                 template_path, outname, angle_axis_to_rotation_matrix(torch.from_numpy(poses)).numpy(), trans,
-                joints, parents, floor_offset=-float(mesh[:, 1].min()), fps=fps, start=start,
+                joints, parents, floor_offset=-float(mesh[:, 1].min()), fps=fps, start=start, **options,
             )
             return True
         if template_path is not None:
-            raise ValueError("A body FBX template is only used for MetaHuman export")
+            raise ValueError("The selected FBX profile does not accept a body template")
+        if profile == "maya_adv":
+            if len(motions) != 1:
+                raise ValueError("AdvancedSkeleton uses one source skeleton per FBX")
+            export_mesh, variant_path, first_pose = False, None, "t"
         scene = fbx.FbxScene.Create(self.mgr, "")
         try:
             settings = scene.GetGlobalSettings()

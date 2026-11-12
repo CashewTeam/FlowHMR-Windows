@@ -67,7 +67,8 @@ def load_scene(mgr: fbx.FbxManager, filepath: str) -> fbx.FbxScene:
 
 
 def export_scene_atomic(
-    mgr: fbx.FbxManager, scene: fbx.FbxScene, out_path: str, *, embed_textures: bool = False
+    mgr: fbx.FbxManager, scene: fbx.FbxScene, out_path: str, *, embed_textures: bool = False,
+    file_version: str | None = None,
 ) -> None:
     os.makedirs(os.path.dirname(out_path) if os.path.dirname(out_path) else ".", exist_ok=True)
 
@@ -85,7 +86,11 @@ def export_scene_atomic(
     try:
         exporter = fbx.FbxExporter.Create(mgr, "")
         try:
-            if not exporter.Initialize(tmp_path, -1, ios) or not exporter.Export(scene):
+            initialized = exporter.Initialize(tmp_path, -1, ios)
+            if initialized and file_version:
+                if not exporter.SetFileExportVersion(file_version, fbx.FbxSceneRenamer.ERenamingMode.eNone):
+                    raise RuntimeError(f"The FBX SDK cannot write {file_version}")
+            if not initialized or not exporter.Export(scene):
                 raise RuntimeError(f"FBX export failed: {exporter.GetStatus().GetErrorString()}")
         finally:
             exporter.Destroy()
@@ -118,11 +123,12 @@ def collect_skeleton_nodes(node, skeleton_nodes=None):
 
 
 def clear_animations(scene: fbx.FbxScene) -> None:
-    count = scene.GetSrcObjectCount(fbx.FbxCriteria.ObjectType(fbx.FbxAnimStack.ClassId))
-    for i in range(count - 1, -1, -1):
-        obj = scene.GetSrcObject(fbx.FbxCriteria.ObjectType(fbx.FbxAnimStack.ClassId), i)
-        if obj:
-            obj.Destroy()
+    # Some importers create animation objects even with animation import
+    # disabled. Deleting a stack alone leaves its layers and curves in the FBX.
+    for object_type in (fbx.FbxAnimStack, fbx.FbxAnimLayer, fbx.FbxAnimCurveNode, fbx.FbxAnimCurve):
+        criteria = fbx.FbxCriteria.ObjectType(object_type.ClassId)
+        for i in reversed(range(scene.GetSrcObjectCount(criteria))):
+            scene.GetSrcObject(criteria, i).Destroy()
 
 
 def strip_mesh_geometry(scene: fbx.FbxScene, safe_detach_if_has_children: bool = True) -> None:
@@ -173,7 +179,13 @@ def animate_single_channel(anim_layer, component, axis: str, values: np.ndarray,
         time.SetSecondDouble(frame * frame_duration)
         idx = curve.KeyAdd(time)[0]
         curve.KeySetValue(idx, float(val[ncomp] if isinstance(val, (list, np.ndarray)) else val))
-        curve.KeySetInterpolation(idx, DEFAULT_INTERP)
+        if preroll is not None and frame == -1:
+            # The reference pose is a setup key. Keep it at negative subframes
+            # when a DCC samples the clip on a different frame grid.
+            curve.KeySetInterpolation(idx, fbx.FbxAnimCurveDef.EInterpolationType.eInterpolationConstant)
+            curve.KeySetConstantMode(idx, fbx.FbxAnimCurveDef.EConstantMode.eConstantStandard)
+        else:
+            curve.KeySetInterpolation(idx, DEFAULT_INTERP)
     curve.KeyModifyEnd()
 
 
@@ -194,8 +206,6 @@ def animate_rotation_from_rotmats(
         # Choose the closer equivalent XYZ branch and unwrap it between keys.
         for i in range(1, len(eulers)):
             eulers[i] = _nearest_xyz(eulers[i], eulers[i - 1])
-        if reference is not None:
-            reference = _nearest_xyz(reference, eulers[0])
         # transforms3d returns the angles in rotation order; FBX curves are named XYZ.
         if axes != DEFAULT_EULER_AXES:
             columns = [axes[1:].index(axis) for axis in "xyz"]
@@ -348,24 +358,28 @@ def apply_skinning(
     store_bind_pose(scene, [*skel_nodes, mesh_node])
 
 
-def _add_node_recursively(node_array: List[fbx.FbxNode], node: fbx.FbxNode) -> None:
+def _add_node_recursively(node_array: List[fbx.FbxNode], seen: set[int], node: fbx.FbxNode) -> None:
     """Recursively add a node and all its parents to the list."""
-    if node is None:
+    if node is None or node.GetUniqueID() in seen:
         return
-    _add_node_recursively(node_array, node.GetParent())
-    if node not in node_array:
-        node_array.append(node)
+    _add_node_recursively(node_array, seen, node.GetParent())
+    seen.add(node.GetUniqueID())
+    node_array.append(node)
 
 
-def store_bind_pose(scene: fbx.FbxScene, nodes: List[fbx.FbxNode]) -> None:
+def store_bind_pose(scene: fbx.FbxScene, nodes: List[fbx.FbxNode], template_matrices=None) -> None:
     """Record the same neutral bone frames with or without a skin."""
     bound_nodes: List[fbx.FbxNode] = []
+    # The FBX SDK can compare distinct nodes as equal when their properties match.
+    seen: set[int] = set()
     for node in nodes:
-        _add_node_recursively(bound_nodes, node)
+        _add_node_recursively(bound_nodes, seen, node)
     pose = fbx.FbxPose.Create(scene, "BindPose")
     pose.SetIsBindPose(True)
     evaluator = scene.GetAnimationEvaluator()
     for node in bound_nodes:
-        bind_matrix = evaluator.GetNodeGlobalTransform(node)
-        pose.Add(node, fbx.FbxMatrix(bind_matrix))
+        bind_matrix = template_matrices.get(node.GetUniqueID()) if template_matrices else None
+        if bind_matrix is None:
+            bind_matrix = fbx.FbxMatrix(evaluator.GetNodeGlobalTransform(node))
+        pose.Add(node, bind_matrix)
     scene.AddPose(pose)

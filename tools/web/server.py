@@ -41,7 +41,7 @@ WEB_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(WEB_DIR))
 sys.path.insert(0, REPO_ROOT)
 
-from flowhmr.utils.runtime_capabilities import MAX_MOTION_FRAMES, SOLE_FIT_REFERENCE_STRENGTH, native_correction_available
+from flowhmr.utils.runtime_capabilities import SOLE_FIT_REFERENCE_STRENGTH, native_correction_available
 from flowhmr.utils.runtime_hamer import hamer_available, HAMER_STRIDES, MISSING_HAMER
 from flowhmr.utils.runtime_preview_inspection import PreviewInspection
 from flowhmr.utils.runtime_preview_thumbnail import ensure_thumbnail
@@ -703,6 +703,7 @@ def _scene_status_locked(parent, members):
     completed = [j for j in members if j["status"] == "done"]
     view = {**parent, "selected_person": None, "candidates": None,
             "person_count": len(members), "person_done": len(completed),
+            "long_motion_frames": max(j.get("long_motion_frames") or 0 for j in members) or None,
             "has_fbx": False, "error": None, "error_code": None, "error_params": {}}
     if active:
         order = ("waiting_user", "running", "cancel_requested", "queued", "uploading")
@@ -1137,13 +1138,23 @@ def api_set_actor_character(actor_id):
     return jsonify(ok=True)
 
 
-@app.post("/api/desktop/character-file")
-def api_desktop_character_file():
+def require_desktop_session():
     key = os.environ.get(CHARACTER_KEY_ENV, "")
     supplied = request.headers.get("X-FlowHMR-Desktop-Key", "")
     if (not local_model_request() or not key or not key.isascii() or not supplied.isascii()
             or not hmac.compare_digest(key, supplied)):
         abort(403)
+
+
+@app.get("/api/desktop/session")
+def api_desktop_session():
+    require_desktop_session()
+    return "", 204, {"Cache-Control": "no-store"}
+
+
+@app.post("/api/desktop/character-file")
+def api_desktop_character_file():
+    require_desktop_session()
     if request.content_length and request.content_length > 16384:
         abort(413)
     value = request.get_json(silent=True)
@@ -1204,7 +1215,6 @@ def api_info():
         "hamer_available": any(item["id"] == "hamer" and item["status"] == "ready" for item in inventory["items"]),
         "body_variants": available_variants(),
         "body_reference": smplh_reference(),
-        "motion_frame_capacity": MAX_MOTION_FRAMES,
         "sam_manual_default": getattr(ARGS, "sam_chunk_default", 16),
     })
 
@@ -1517,6 +1527,7 @@ def api_job(job_id):
         scene = job.get("person_batch") == job_id
         motion = os.path.join(job_dir(job_id), "scene" if scene else "", "motion.npz")
         job["has_vmd"] = os.path.isfile(motion)
+        job["has_vrma"] = job["has_vmd"]
         job["has_fbx"] = job["has_vmd"] and fbx_export_available(job_body_reference(job))
     canonical = os.path.join(job_dir(job_id), SUB, f"{SUB}_30fps.mp4")
     job["has_preview_video"] = os.path.isfile(canonical)
@@ -1747,9 +1758,10 @@ def variant_preview(directory, body, reference, reference_path):
     return output
 
 
-FBX_PROFILES = {"flowhmr", "mixamo", "metahuman"}
-METAHUMAN_TEMPLATE_MB = 128
-METAHUMAN_TEMPLATE_LIMIT = METAHUMAN_TEMPLATE_MB * (1 << 20)
+FBX_TEMPLATE_PROFILES = {"metahuman": "metahuman", "mixamo_iclone": "mixamo"}
+FBX_PROFILES = {"flowhmr", "mixamo", "maya_adv", *FBX_TEMPLATE_PROFILES}
+FBX_TEMPLATE_MB = 128
+FBX_TEMPLATE_LIMIT = FBX_TEMPLATE_MB * (1 << 20)
 
 
 def motion_export_source(job_id):
@@ -1782,18 +1794,18 @@ def export_selection_label(available, chosen, signature):
     return f"scene_{len(chosen)}people_{signature[:6]}"
 
 
-def copy_fbx_template(file, path):
+def copy_fbx_template(file, path, kind):
     digest = hashlib.sha256()
     size = 0
     with open(path, "wb") as output:
         for block in iter(lambda: file.stream.read(1 << 20), b""):
             size += len(block)
-            if size > METAHUMAN_TEMPLATE_LIMIT:
-                raise UserMessage("MetaHuman 模板过大。", "metahuman_template_size", max=METAHUMAN_TEMPLATE_MB)
+            if size > FBX_TEMPLATE_LIMIT:
+                raise UserMessage("FBX 模板过大。", f"{kind}_template_size", max=FBX_TEMPLATE_MB)
             digest.update(block)
             output.write(block)
     if not size:
-        raise UserMessage("请选择有效的 MetaHuman 身体骨架 FBX。", "metahuman_template_required")
+        raise UserMessage("请选择有效的 FBX 骨架模板。", f"{kind}_template_required")
     return digest.hexdigest()
 
 
@@ -1803,7 +1815,8 @@ def api_fbx(job_id):
     if find_spec("fbx") is None:
         abort(404)
     profile = request.args.get("profile", "flowhmr")
-    if profile not in FBX_PROFILES or (request.method == "POST" and profile != "metahuman"):
+    template_kind = "mixamo" if profile == "mixamo" and request.method == "POST" else FBX_TEMPLATE_PROFILES.get(profile)
+    if profile not in FBX_PROFILES or (request.method == "POST" and not template_kind):
         return api_error("fbx_profile", "请选择有效的 FBX 骨架预设。", 400)
     reference = job_body_reference(job)
     try:
@@ -1821,19 +1834,24 @@ def api_fbx(job_id):
         chosen, signature = select_export_people(available)
     except UserMessage as error:
         return api_error(error.code, str(error), 400, **error.params)
+    if profile == "maya_adv":
+        if chosen is not None and len(chosen) != 1:
+            return api_error("maya_adv_export_options", "AdvancedSkeleton 每个 FBX 只导出一人的动作。", 400)
+        mode, first_pose = "0", "t"
     template = None
-    if profile == "metahuman":
+    if template_kind:
+        required = f"{template_kind}_template_required"
         if request.method != "POST":
-            return api_error("metahuman_template_required", "请选择 MetaHuman 身体骨架 FBX。", 400)
+            return api_error(required, "请选择有效的 FBX 骨架模板。", 400)
         if not local_model_request():
-            return api_error("metahuman_local_only", "请在本机 FlowHMR 中选择 MetaHuman 模板。", 403)
+            return api_error(f"{template_kind}_local_only", "请在本机 FlowHMR 中选择 FBX 模板。", 403)
         if mode != "0" or first_pose != "none" or (chosen is not None and len(chosen) != 1):
-            return api_error("metahuman_export_options", "MetaHuman 每次只导出一人的身体动画。", 400)
-        if request.content_length and request.content_length > METAHUMAN_TEMPLATE_LIMIT + (1 << 20):
-            return api_error("metahuman_template_size", "MetaHuman 模板过大。", 413, max=METAHUMAN_TEMPLATE_MB)
+            return api_error(f"{template_kind}_export_options", "按模板每次只导出一人的动画骨架。", 400)
+        if request.content_length and request.content_length > FBX_TEMPLATE_LIMIT + (1 << 20):
+            return api_error(f"{template_kind}_template_size", "FBX 模板过大。", 413, max=FBX_TEMPLATE_MB)
         templates = request.files.getlist("template")
         if len(templates) != 1 or not (templates[0].filename or "").lower().endswith(".fbx"):
-            return api_error("metahuman_template_required", "请选择 MetaHuman 身体骨架 FBX。", 400)
+            return api_error(required, "请选择有效的 FBX 骨架模板。", 400)
         template = templates[0]
     with_skin = mode == "1"
     suffix = "skin" if with_skin else "skeleton"
@@ -1848,9 +1866,10 @@ def api_fbx(job_id):
     # The final NPZ is authoritative. Re-export old jobs with the corrected
     # rig instead of sending a legacy FBX saved before the exporter fix.
     exports = os.path.join(os.path.dirname(source), "exports")
-    prefix = f"fbx_scene_v3_{signature}" if chosen is not None else "fbx_mmr_v3"
+    revision = 5 if first_pose != "none" else 4
+    prefix = f"fbx_scene_v5_{signature}" if chosen is not None else f"fbx_mmr_v{revision}"
     if profile != "flowhmr":
-        revision = 2 if profile == "metahuman" else 1
+        revision = 3 if profile in ("metahuman", "mixamo", "maya_adv") else 2
         prefix = f"fbx_{profile}_v{revision}_{signature or 'single'}"
     pose_tag = f"_{first_pose}_pose" if first_pose != "none" else ""
     cache_name = f"{prefix}_{file_stamp(source)}_{suffix}{tag}{pose_tag}"
@@ -1880,16 +1899,16 @@ def api_fbx(job_id):
                 os.makedirs(exports, exist_ok=True)
                 with tempfile.TemporaryDirectory(dir=exports, prefix=".template-") as scratch:
                     target = os.path.join(scratch, "body.fbx")
-                    template_hash = copy_fbx_template(template, target)
+                    template_hash = copy_fbx_template(template, target, template_kind)
                     path = write(target, template_hash)
     except UserMessage as error:
-        return api_error(error.code, str(error), 413 if error.code == "metahuman_template_size" else 400, **error.params)
+        return api_error(error.code, str(error), 413 if error.code.endswith("_template_size") else 400, **error.params)
     except ValueError as error:
-        code = "metahuman_template_invalid" if template is not None else "motion_export_failed"
+        code = f"{template_kind}_template_invalid" if template_kind else "motion_export_failed"
         return api_error(code, "无法导出动作。", 422, detail=str(error)[:300])
     except (BadZipFile, ImportError, KeyError, OSError, RuntimeError):
         app.logger.exception("FBX export failed for job %s", job_id)
-        code = "metahuman_template_invalid" if template is not None else "motion_export_failed"
+        code = f"{template_kind}_template_invalid" if template_kind else "motion_export_failed"
         return api_error(code, "无法导出动作。", 422, detail="")
     if with_skin and body != "neutral":
         suffix = f"{body}_{suffix}"
@@ -1901,6 +1920,45 @@ def api_fbx(job_id):
     else:
         name = f"{export_stem(job)}_{profile}_{suffix}.fbx"
     return send_file(path, mimetype="application/octet-stream", as_attachment=True, download_name=name, conditional=True)
+
+
+def write_humanoid_motion(source, path, chosen, format_name, export_person):
+    if chosen is None:
+        export_person(source, path, None)
+        return
+    with np.load(source, allow_pickle=False) as data:
+        fps = data["mocap_framerate"]
+
+        def write(person, output):
+            number, first, last = person["person"], person["start"], person["end"]
+            motion = {key: data[f"{key}_{number}"] for key in ("poses", "trans", "betas")}
+            if motion["trans"].shape != (last - first + 1, 3):
+                raise ValueError(f"{format_name.upper()} source range does not match the scene motion")
+            export_person({**motion, "mocap_framerate": fps}, output, person)
+
+        if len(chosen) == 1:
+            write(chosen[0], path)
+            return
+        with tempfile.TemporaryDirectory(dir=os.path.dirname(path), prefix=f".{format_name}-") as scratch:
+            archive = os.path.join(scratch, "people.zip")
+            with ZipFile(archive, "w", ZIP_DEFLATED, compresslevel=4) as packed:
+                for person in chosen:
+                    name = f"person_{person['person']:02d}.{format_name}"
+                    output = os.path.join(scratch, name)
+                    write(person, output)
+                    packed.write(output, name)
+            os.replace(archive, path)
+
+
+def send_humanoid_motion(path, job, available, chosen, signature, format_name, extension):
+    if chosen is None:
+        name = f"{export_stem(job)}_{format_name}.{extension}"
+    else:
+        stem = os.path.splitext(job["filename"])[0]
+        group = export_selection_label(available, chosen, signature)
+        name = f"{stem}_{format_name}_{group}.{extension}"
+    mime = "application/zip" if extension == "zip" else "application/octet-stream"
+    return send_file(path, mimetype=mime, as_attachment=True, download_name=name, conditional=True)
 
 
 @app.get("/api/jobs/<job_id>/vmd")
@@ -1918,51 +1976,72 @@ def api_vmd(job_id):
     except ValueError:
         reference_path = None
     reference_stamp = file_stamp(reference_path) if reference_path is not None else "standard"
-    path = os.path.join(folder, f"vmd_v1_{file_stamp(source)}_{signature or 'single'}_{reference_stamp}.{extension}")
+    path = os.path.join(folder, f"vmd_v2_{file_stamp(source)}_{signature or 'single'}_{reference_stamp}.{extension}")
     try:
         with FBX_EXPORT_LOCK:
             if not os.path.isfile(path):
                 from flowhmr.core.export.vmd import export_vmd
 
                 os.makedirs(folder, exist_ok=True)
-                if chosen is None:
-                    export_vmd(source, path, reference_path=reference_path)
-                else:
-                    end = max(p["end"] for p in chosen)
-                    with np.load(source, allow_pickle=False) as data:
-                        fps = data["mocap_framerate"]
+                end = max(p["end"] for p in chosen) if chosen is not None else None
 
-                        def export_person(person, output):
-                            number, first, last = person["person"], person["start"], person["end"]
-                            motion = {key: data[f"{key}_{number}"] for key in ("poses", "trans", "betas")}
-                            if motion["trans"].shape != (last - first + 1, 3):
-                                raise ValueError("VMD source range does not match the scene motion")
-                            export_vmd({**motion, "mocap_framerate": fps}, output, start_frame=first,
-                                       scene_end=end, reference_path=reference_path)
+                def write(motion, output, person):
+                    export_vmd(motion, output, start_frame=person["start"] if person else 0,
+                               scene_end=end, reference_path=reference_path)
 
-                        if not multiple:
-                            export_person(chosen[0], path)
-                        else:
-                            with tempfile.TemporaryDirectory(dir=folder, prefix=".vmd-") as scratch:
-                                archive = os.path.join(scratch, "people.zip")
-                                with ZipFile(archive, "w", ZIP_DEFLATED, compresslevel=4) as packed:
-                                    for person in chosen:
-                                        name = f"person_{person['person']:02d}.vmd"
-                                        output = os.path.join(scratch, name)
-                                        export_person(person, output)
-                                        packed.write(output, name)
-                                os.replace(archive, path)
+                write_humanoid_motion(source, path, chosen, "vmd", write)
     except (OSError, ValueError, KeyError, BadZipFile) as error:
         app.logger.warning("VMD export failed for job %s: %s", job_id, error)
         return api_error("motion_export_failed", "无法导出动作。", 422, detail=str(error)[:300])
-    if chosen is None:
-        name = f"{export_stem(job)}_vmd.{extension}"
-    else:
-        stem = os.path.splitext(job["filename"])[0]
-        group = export_selection_label(available, chosen, signature)
-        name = f"{stem}_vmd_{group}.{extension}"
-    mime = "application/zip" if multiple else "application/octet-stream"
-    return send_file(path, mimetype=mime, as_attachment=True, download_name=name, conditional=True)
+    return send_humanoid_motion(path, job, available, chosen, signature, "vmd", extension)
+
+
+@app.get("/api/jobs/<job_id>/vrma")
+def api_vrma(job_id):
+    job, source, available = motion_export_source(job_id)
+    try:
+        chosen, signature = select_export_people(available)
+    except UserMessage as error:
+        return api_error(error.code, str(error), 400, **error.params)
+    source_reference = job_body_reference(job)
+    references = {}
+    for person in chosen if chosen is not None else (None,):
+        number = person["person"] if person else None
+        reference = person.get("body_reference") if person else None
+        if not isinstance(reference, str) or reference not in SMPLH_FILES:
+            reference = source_reference
+        try:
+            references[number] = model_path(reference)
+        except ValueError:
+            error = missing_body_reference(reference)
+            return api_error(error.code, str(error), 409, **error.params)
+    extension = "zip" if chosen is not None and len(chosen) > 1 else "vrma"
+    folder = os.path.join(os.path.dirname(source), "exports")
+    try:
+        floor = float(job["scene"].get("ground_m", 0.) if chosen is not None
+                      else (job.get("correction") or {}).get("floor_m", 0.))
+        if not np.isfinite(floor):
+            raise ValueError("Invalid motion ground height")
+        stamp = (file_stamp(source), signature, floor,
+                 [(number, str(model), file_stamp(model)) for number, model in references.items()])
+        key = hashlib.sha256(json.dumps(stamp, separators=(",", ":")).encode()).hexdigest()[:24]
+        path = os.path.join(folder, f"vrma_v1_{key}.{extension}")
+        with FBX_EXPORT_LOCK:
+            if not os.path.isfile(path):
+                from flowhmr.core.export.vrma import export_vrma
+
+                os.makedirs(folder, exist_ok=True)
+
+                def write(motion, output, person):
+                    number = person["person"] if person else None
+                    export_vrma(motion, output, reference_path=references[number],
+                                start_frame=person["start"] if person else 0, floor=floor)
+
+                write_humanoid_motion(source, path, chosen, "vrma", write)
+    except (OSError, ValueError, KeyError, TypeError, BadZipFile) as error:
+        app.logger.warning("VRMA export failed for job %s: %s", job_id, error)
+        return api_error("motion_export_failed", "无法导出动作。", 422, detail=str(error)[:300])
+    return send_humanoid_motion(path, job, available, chosen, signature, "vrma", extension)
 
 
 @app.route("/api/jobs/<job_id>/thumbnail.jpg")
@@ -2021,6 +2100,7 @@ def api_pmx_motion(job_id):
     except ValueError:
         error = missing_body_reference(reference)
         return api_error(error.code, str(error), 409, **error.params)
+    from flowhmr.core.export.vrma import VRM_NECK_PITCH
     from flowhmr.utils.runtime_pmx_motion import pmx_motion
 
     try:
@@ -2031,7 +2111,8 @@ def api_pmx_motion(job_id):
         app.logger.warning("Could not read the PMX source motion for %s: %s", job_id, exc)
         return api_error("pmx_motion", "无法读取此任务的角色预览动作。", 422)
     response = app.response_class(stream, mimetype="application/octet-stream")
-    response.headers["X-FlowHMR-PMX-Motion"] = json.dumps(meta, separators=(",", ":"), allow_nan=False)
+    response.headers["X-FlowHMR-PMX-Motion"] = json.dumps(
+        {**meta, "vrmNeckPitch": VRM_NECK_PITCH}, separators=(",", ":"), allow_nan=False)
     return response
 
 

@@ -25,25 +25,38 @@ class RotaryEmbedding(nn.Module):
         self.theta_rescale_factor = theta_rescale_factor
         self.interpolation_factor = interpolation_factor
 
-        if isinstance(max_seq_len, int):
-            max_seq_len = torch.arange(max_seq_len, dtype=torch.float32)
+        positions = torch.arange(max_seq_len, dtype=torch.float32) if isinstance(max_seq_len, int) else max_seq_len
+        cos, sin, complex_freqs = self._build_tables(positions)
+        self.register_buffer("_freqs_cos", cos, persistent=False)
+        self.register_buffer("_freqs_sin", sin, persistent=False)
+        self.register_buffer("_freqs_complex", complex_freqs, persistent=False)
 
-        if theta_rescale_factor != 1.0:
-            temperature *= theta_rescale_factor ** (self.num_feats / (self.num_feats - 2))
-        dim_t = torch.arange(0, self.num_feats, 2, dtype=torch.float32)
+    def _build_tables(self, positions: Tensor):
+        temperature = self.temperature
+        if self.theta_rescale_factor != 1.0:
+            temperature *= self.theta_rescale_factor ** (self.num_feats / (self.num_feats - 2))
+        dim_t = torch.arange(0, self.num_feats, 2, dtype=torch.float32, device=positions.device)
         freqs = 1.0 / (temperature ** (2 * torch.div(dim_t, 2, rounding_mode="trunc") / self.num_feats))  # [D/2]
-        freqs = torch.outer(max_seq_len.to(dtype=torch.float32) * interpolation_factor, freqs)
-        if use_real:
-            freqs_cos = freqs.cos().repeat_interleave(2, dim=1)
-            freqs_sin = freqs.sin().repeat_interleave(2, dim=1)
-            self.register_buffer("_freqs_cos", freqs_cos, persistent=False)
-            self.register_buffer("_freqs_sin", freqs_sin, persistent=False)
-            self.register_buffer("_freqs_complex", None, persistent=False)
-        else:
-            freqs_complex = torch.polar(torch.ones_like(freqs), freqs)
-            self.register_buffer("_freqs_cos", None, persistent=False)
-            self.register_buffer("_freqs_sin", None, persistent=False)
-            self.register_buffer("_freqs_complex", freqs_complex, persistent=False)
+        freqs = torch.outer(positions.to(dtype=torch.float32) * self.interpolation_factor, freqs)
+        if self.use_real:
+            return freqs.cos().repeat_interleave(2, dim=1), freqs.sin().repeat_interleave(2, dim=1), None
+        return None, None, torch.polar(torch.ones_like(freqs), freqs)
+
+    def _extend_tables(self, length: int) -> None:
+        table = self._freqs_cos if self.use_real else self._freqs_complex
+        cached = table.shape[0]
+        if length <= cached or not isinstance(self.max_seq_len, int):
+            return
+        # Preserve every existing position. Custom coordinate tensors keep their fixed extent.
+        with torch.inference_mode(False), torch.no_grad():
+            cos, sin, complex_freqs = self._build_tables(torch.arange(cached, length, dtype=torch.float32, device="cpu"))
+            if self.use_real:
+                self._freqs_cos, self._freqs_sin = (
+                    torch.cat((self._freqs_cos, cos.to(self._freqs_cos))),
+                    torch.cat((self._freqs_sin, sin.to(self._freqs_sin))),
+                )
+            else:
+                self._freqs_complex = torch.cat((table, complex_freqs.to(table)))
 
     @property
     def freqs_cis(self) -> Union[Tensor, Tuple[Tensor, Tensor]]:
@@ -105,10 +118,11 @@ class RotaryEmbedding(nn.Module):
     def apply_rotary_emb(self, xq: Tensor, xk: Tensor, split_len: Optional[int] = None) -> Tuple[Tensor, Tensor]:
         # - split_len is intentionally ignored for 1D RoPE (RotaryEmbedding).
         # - It is used by MultimodalRotaryEmbedding to align the motion/text boundary dynamically.
-        xk_out = None
+        self._extend_tables(xq.shape[1])
+        tables = self.freqs_cis
         work_dtype = torch.float32
-        if isinstance(self.freqs_cis, tuple):
-            cos, sin = self.reshape_for_broadcast(self.freqs_cis, xq)
+        if isinstance(tables, tuple):
+            cos, sin = self.reshape_for_broadcast(tables, xq)
             cos = cos.to(device=xq.device, dtype=work_dtype)
             sin = sin.to(device=xq.device, dtype=work_dtype)
             # real * cos - imag * sin
@@ -120,15 +134,7 @@ class RotaryEmbedding(nn.Module):
         else:
             # view_as_complex will pack [..., D/2, 2](real) to [..., D/2](complex)
             xq_ = torch.view_as_complex(xq.to(dtype=work_dtype).reshape(*xq.shape[:-1], -1, 2))
-            freqs_cis = self.reshape_for_broadcast(self.freqs_cis, xq_)
-            # Handle device transfer based on return type
-            if isinstance(freqs_cis, tuple):
-                freqs_cis = (
-                    freqs_cis[0].to(device=xq.device, dtype=work_dtype),
-                    freqs_cis[1].to(device=xq.device, dtype=work_dtype),
-                )
-            else:
-                freqs_cis = freqs_cis.to(device=xq.device)
+            freqs_cis = self.reshape_for_broadcast(tables, xq_).to(device=xq.device)
             # (real, imag) * (cos, sin) = (real * cos - imag * sin, imag * cos + real * sin)
             # view_as_real will expand [..., D/2](complex) to [..., D/2, 2](real)
             xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3).type_as(xq)

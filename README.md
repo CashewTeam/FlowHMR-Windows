@@ -6,14 +6,20 @@
 
 **[下载 Windows 便携版](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [查看发布说明](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR 论文](https://arxiv.org/abs/2610.03691)
 
+## v0.3.2 更新
+
+- **程序更新。** 每次启动在后台检查。有新版时会提示版本号和更新内容，确认下载后会在下次启动时安装。右上角也可手动检查、从官方 ZIP 更新或选择历史版本。更新服务连不上时可以继续使用软件。见[完整更新说明](docs/release-windows.md)。
+- **长视频。** 按选定区间内的实际人物轨迹处理，超过 5000 帧继续生成，并标为实验性。SAM 自动按当前可用显存选择批次，分配失败时降批重试。选人时可滚动候选列表，视频预览仍可见。
+- **导出。** 修正 MMD 的 VMD 播放节奏和通用 FBX 的参考姿势朝向。Mixamo 可选角色模板，Maya AdvancedSkeleton 可配合随包的 30 FPS 帧率助手使用。导出时可选保存路径，软件记住上次成功导出的目录。
+
 ## Windows 桌面版
 
 - **导入视频，在一个窗口完成动捕。** 选择要处理的人物和帧范围，生成后并排看原视频和 3D 动作。时间轴可同步播放、拖动和循环，可播放原声，也可以切换蒙皮和骨架显示。
 - **多人一起预览和导出。** 同一条视频可选中多个人；合并预览和 FBX 保留他们在原视频中的相对站位和入场时间。旧任务可从带缩略图的历史里继续查看。
 - **按素材调整动作。** 可调动作滤波、脚部接触修正和地面高度；需要更细的手指动作时，可开启 HaMeR 手指精修。相机默认用固定机位，镜头明显转向、俯仰或滚转时再用运动相机。
 - **在本机运行。** 程序按需安装推理环境和模型，开始生成时才加载模型；装好后可离线处理。支持简体中文、繁體中文、English、日本語、한국어、Русский 和 Français，重开程序会记住上次选的语言。
-- **动作导出。** 支持 FlowHMR / Mixamo / MetaHuman FBX、MMD VMD 和 NPZ。FlowHMR 和 Mixamo FBX 可选蒙皮和第 **−1 帧**的 T Pose / A Pose。详见[导出与重定向](docs/retarget-export.md)。
-- **自定义角色。** 支持 PMX 和带蒙皮的 Mixamo / MetaHuman FBX；多人可分别选择角色并记住骨骼调整。兼容的 PMX 支持原生 IK / FK 切换，按角色导出的 VMD 可保留脚部 IK。
+- **动作导出。** 支持 FlowHMR、Mixamo、MetaHuman、Maya AdvancedSkeleton FBX，以及 MMD VMD、VRM Animation（VRMA）和 NPZ。FlowHMR 和 Mixamo FBX 可选蒙皮和第 **−1 帧**的 T Pose / A Pose。详见[导出与重定向](docs/retarget-export.md)。
+- **自定义角色。** 支持 PMX、VRM 0.x / 1.0 和带蒙皮的 Mixamo / MetaHuman FBX。多人可分别选择角色并记住骨骼调整。兼容的 PMX 支持原生 IK / FK 切换，按角色导出的 VMD 可保留脚部 IK。
 
 ## 示例视频
 
@@ -32,7 +38,7 @@
 1. 在 64 位 Windows 10 / 11 上完整解压 `FlowHMR-Windows.zip`，进入解包后的 `FlowHMR` 文件夹，双击 `FlowHMR.exe`。基础包自带 Python、界面组件和 FBX 导出组件。
 2. 安装兼容的显卡驱动，再在右上角 **运行环境** 下载并启用对应版本。NVIDIA 用户选 CUDA，RTX 50 系列推荐 CUDA 12.8。AMD Radeon RX 9000 系列中使用 `gfx1201` 的型号，可按下方步骤试用 ROCm。
 3. 打开 **模型**，点 **下载全部公开模型**，也可以逐项下载。公开模型会校验后放到 `models/`；SAM 3D Body 和 VGGT-Omega 由魔搭提供。不需要手指精修时，可以跳过 HaMeR。需要登录的官方模型按下表取得。
-4. 把视频拖进软件，选择要处理的人物和帧范围，再开始生成。完成后可先预览，再从菜单导出 FBX、VMD 或 NPZ。
+4. 把视频拖进软件，选择要处理的人物和帧范围，再开始生成。完成后可先预览，再从菜单导出 FBX、VMD、VRMA 或 NPZ。
 
 ### AMD Radeon RX 9000 系列（实验支持）
 

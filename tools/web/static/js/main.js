@@ -14,8 +14,10 @@ import { initTrim } from "./trim.js";
 import { initModelDialog } from "./models.js";
 import { initRuntimeDialog } from "./runtime.js";
 import { initMotionExport } from "./motion-export.js";
+import { initUpdates } from "./update.js";
 
 setupLocalization();
+const confirmWorkspaceReady = initUpdates();
 const themeOptions = $("themeOptions");
 const themeButtons = [...themeOptions.querySelectorAll("[data-theme-choice]")];
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
@@ -113,7 +115,6 @@ if (info?.postprocess_available === false) {
 }
 params = initParams(info?.defaults ?? {}, info?.sam_manual_default ?? 24);
 if (info?.runtime?.supported) runtime.restore();
-trim.setCapacity(info?.motion_frame_capacity);
 const jobs = (await history.refresh()) ?? [];
 const savedJob = localStorage.getItem("flowhmr-last-job");
 let initialJob = jobs.find((job) => job.status === "waiting_user" || job.status === "running")
@@ -125,6 +126,7 @@ if (!initialJob && savedJob) {
 initialJob ??= jobs.find((job) => job.status === "done") ?? jobs[0];
 if (initialJob) void openJob(initialJob.id, true);
 syncSubmit();
+if (info) confirmWorkspaceReady();
 
 // ------------------------------------------------------------------ wiring
 bus.on("file:selected", (file) => {

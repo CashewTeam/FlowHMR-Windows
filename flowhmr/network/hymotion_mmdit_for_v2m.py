@@ -12,6 +12,7 @@ from torch import Tensor
 
 from ..core.framework.loaders import load_object
 from ..core.framework.type_converter import get_module_device
+from ..utils.runtime_capabilities import LONG_MOTION_EXPERIMENTAL_THRESHOLD
 from .mmdit.attention import attention
 from .mmdit.bricks import get_activation_layer, get_norm_layer
 from .mmdit.encoders import MLP, MLPEncoder, TimestepEmbeddingEncoder
@@ -502,7 +503,10 @@ class HunyuanMotionMMDiT(nn.Module):
         seq_key_padding_mask = torch.cat((motion_key_padding_mask, ctxt_key_padding_mask), dim=1)
 
         use_query_batched = (
-            not self.training and self.attention_backend == "query_batched" and self.mask_mode == "narrowband_v2m"
+            not self.training and self.mask_mode == "narrowband_v2m" and (
+                self.attention_backend == "query_batched"
+                or (self.attention_backend == "auto" and x.shape[1] > LONG_MOTION_EXPERIMENTAL_THRESHOLD)
+            )
         )
         if hasattr(self, "text_refiner"):
             refiner_kwargs = {}

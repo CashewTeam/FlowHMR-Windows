@@ -14,7 +14,7 @@ import torch
 import yaml
 from torch import Tensor
 
-from flowhmr.utils.runtime_capabilities import MAX_MOTION_FRAMES
+from flowhmr.utils.runtime_capabilities import LONG_MOTION_EXPERIMENTAL_THRESHOLD
 from flowhmr.utils.runtime_image_io import write_image
 
 
@@ -202,16 +202,16 @@ def plan_sam_batch(device, frames, requested=None):
     device = torch.device(device)
     info = {"requested": requested, "actual": min(frames, requested or 16), "reused": False, "retries": 0}
     if device.type == "cuda":
+        mib = 1024 ** 2
         free, total = torch.cuda.mem_get_info(device)
-        reusable = max(0, torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device))
-        available = min(total, free + reusable)
-        info.update(free_mib=free // (1024 ** 2), total_mib=total // (1024 ** 2))
+        info.update(free_mib=free // mib, total_mib=total // mib)
         if requested is None:
-            # Warm local runs use roughly 0.23 GiB per additional frame; allow
-            # extra headroom for both hand batches, allocator and other apps.
-            reserve = max(1536 * 1024 ** 2, int(total * 0.10))
-            budget = min(available - reserve, int(total * 0.78) - (total - available))
-            info["actual"] = min(frames, max(1, budget // (384 * 1024 ** 2)))
+            # Free memory is measured with SAM resident and unused allocator blocks released.
+            # Small or busy GPUs need extra room for the first body and two-hand passes.
+            constrained = total <= 9 * 1024 * mib or free < 5 * 1024 * mib
+            reserve = max((2048 if constrained else 1536) * mib, total * 22 // 100)
+            per_frame = (512 if constrained else 384) * mib
+            info["actual"] = min(frames, max(1, (free - reserve) // per_frame))
     return info
 
 
@@ -1168,9 +1168,10 @@ class V2MInferenceEngine:
             start_end_arr = data["start_end"].astype(np.int64)
         s, e = int(start_end_arr[0]), int(start_end_arr[1])
         t_track = e - s + 1
-        _details(track_range=[s, e])
-        if t_track > MAX_MOTION_FRAMES:
-            raise ValueError(f"区间内人物轨迹有 {t_track} 帧，模型单段支持 {MAX_MOTION_FRAMES} 帧。请在时间轴缩短处理区间。")
+        long_motion_frames = t_track if t_track > LONG_MOTION_EXPERIMENTAL_THRESHOLD else None
+        _details(track_range=[s, e], long_motion_frames=long_motion_frames)
+        if long_motion_frames:
+            print(f"  [motion] experimental long track: {t_track} frames in [{s},{e}]", flush=True)
 
         from flowhmr.utils.runtime_vggt_camera import (
             camera_intervals, extract_vggt_camera, extract_vggt_camera_isolated,
@@ -1284,7 +1285,12 @@ class V2MInferenceEngine:
                     _pcb(StageName.FEATURE_EXTRACT, pct, desc)
 
             self._activate_stage(StageName.FEATURE_EXTRACT)
-            batch = plan_sam_batch(self.device, t_track, sam_chunk_size)
+            estimator = getattr(self.sam_extractor, "estimator", None)
+            sam_device = torch.device(getattr(estimator, "device", self.device))
+            if sam_chunk_size is None and sam_device.type == "cuda":
+                with torch.cuda.device(sam_device):
+                    torch.cuda.empty_cache()
+            batch = plan_sam_batch(sam_device, t_track, sam_chunk_size)
             if not feature_cached:
                 _details(sam_batch=batch.copy())
             print(f"  [sam] {'auto' if sam_chunk_size is None else 'manual'} batch={batch['actual']}, "
@@ -1294,7 +1300,7 @@ class V2MInferenceEngine:
                 batch.update(actual=size, retries=batch["retries"] + 1)
                 if not feature_cached:
                     _details(sam_batch=batch.copy())
-                print(f"  [sam] CUDA OOM: continuing with batch={size}")
+                print(f"  [sam] GPU memory retry {batch['retries']}: batch={size}", flush=True)
 
             sam_args = dict(
                 bbox_xyxy=bbox_full_t,

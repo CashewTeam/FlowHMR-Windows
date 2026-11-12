@@ -25,7 +25,9 @@ _DEFAULT_SOURCE_FLOOR = -1.16
 _POSITION_MIRROR = np.array((1.0, 1.0, -1.0))
 _AXIAL_MIRROR = -_POSITION_MIRROR
 
-_LINEAR_CHANNELS = bytes([20] * 8 + [107] * 8)
+# Diagonal curves in both the packed and shifted rows. Bytes 2 and 3 in
+# the packed row also carry MMD's default physics flag (00 00).
+_LINEAR_CHANNELS = bytes(8) + bytes([127]) * 8
 _LINEAR = b"".join(_LINEAR_CHANNELS[i:].ljust(16, b"\0") for i in range(4))
 _IK_NAMES = tuple(
     f"{side}{part}{suffix}".encode("shift_jis")

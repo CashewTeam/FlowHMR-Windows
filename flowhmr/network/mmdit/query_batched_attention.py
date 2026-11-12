@@ -11,11 +11,11 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
 def resolve_query_attention_config(backend=None, chunk_size=None) -> Tuple[str, int]:
-    """Resolve optional constructor settings without changing existing defaults."""
+    """Resolve optional constructor settings for inference attention."""
     if backend is None:
-        backend = os.environ.get("FLOWHMR_ATTENTION_BACKEND", "original")
-    if backend not in ("original", "query_batched"):
-        raise ValueError("attention_backend must be 'original' or 'query_batched'")
+        backend = os.environ.get("FLOWHMR_ATTENTION_BACKEND", "auto")
+    if backend not in ("auto", "original", "query_batched"):
+        raise ValueError("attention_backend must be 'auto', 'original' or 'query_batched'")
     if chunk_size is None:
         chunk_size = os.environ.get("FLOWHMR_ATTENTION_QUERY_CHUNK_SIZE", "256")
     if isinstance(chunk_size, str):

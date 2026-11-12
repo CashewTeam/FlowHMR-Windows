@@ -7,7 +7,8 @@ const PROPERTY_BYTES = 9;
 const IK_BYTES = 21;
 const VMD_SIGNATURE = new TextEncoder().encode("Vocaloid Motion Data 0002");
 const LINEAR = new Uint8Array(64);
-const channels = Uint8Array.of(...Array(8).fill(20), ...Array(8).fill(107));
+// Diagonal curves in both row layouts, with the default MMD physics flag at bytes 2 and 3.
+const channels = new Uint8Array(16).fill(127, 8);
 for (let i = 0; i < 4; i++) LINEAR.set(channels.subarray(i), 16 * i);
 
 export class PmxVmdExportError extends Error {

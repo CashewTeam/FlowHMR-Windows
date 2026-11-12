@@ -6,7 +6,7 @@ export function initTrim({ video, clock, seek }) {
   const start = $("trimStart"), end = $("trimEnd");
   const startValue = $("trimStartValue"), endValue = $("trimEndValue");
   const full = $("trimFull"), lane = $("trimRange");
-  let active = false, editable = true, frames = 0, exact = false, capacity = 0;
+  let active = false, editable = true, frames = 0, exact = false;
 
   function sync() {
     const first = startValue.valueAsNumber || 1;
@@ -28,7 +28,6 @@ export function initTrim({ video, clock, seek }) {
         first, end: hasEnd ? m("timeline.frame", { frame: last }) : m("timeline.auto_end_short"),
       }),
       frames ? t(exact ? "timeline.source_count" : "timeline.estimated_count", { frames }) : "",
-      capacity && frames && last - first + 1 > capacity ? t("timeline.capacity", { frames: capacity }) : "",
     ].filter(Boolean).join(" · "));
   }
 
@@ -65,7 +64,6 @@ export function initTrim({ video, clock, seek }) {
   return {
     begin() { active = editable = true; frames = 0; exact = false; sync(); },
     clear() { active = false; editable = true; frames = 0; exact = false; full.onclick(); },
-    setCapacity(max) { capacity = max || 0; sync(); },
     setEditable(value) { if (editable !== value) { editable = value; sync(); } },
     setSource(count) {
       if (Number.isSafeInteger(count) && count > 0 && (frames !== count || !exact)) { frames = count; exact = true; sync(); }

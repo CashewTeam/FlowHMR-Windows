@@ -6,14 +6,20 @@
 
 **[Download the portable Windows edition](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [Release notes](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR paper](https://arxiv.org/abs/2610.03691)
 
+## What's new in v0.3.2
+
+- **App updates.** The app checks in the background each time it starts. A new version opens a notice with its version number and release notes. If you choose to download it, the app installs it on the next launch. You can also check manually, update from an official ZIP, or select a previous version. You can keep working if the update service is unreachable. See the [full release notes](../release-windows.md).
+- **Long videos.** FlowHMR uses the actual person track within the selected range. Tracks over 5,000 frames continue as an experimental feature. SAM chooses its batch size from available VRAM and retries with smaller batches if allocation fails. The video stays visible while you scroll through the person list.
+- **Export.** This version corrects VMD playback timing in MMD and the reference pose orientation of generic FBX exports. Mixamo accepts a character template, and Maya AdvancedSkeleton can use the included 30 FPS helper. The app remembers your last successful export directory.
+
 ## Windows desktop edition
 
 - **Capture motion in one window.** Choose who to track and which frames to process, then view the source video and the 3D motion side by side. The timeline keeps playback, seeking and loops in sync. Play the original audio and switch between the skinned mesh and skeleton displays.
 - **Preview and export multiple people together.** Select several people in one video. The combined preview and FBX preserve their relative positions and when each person enters. Reopen previous jobs from the thumbnail history.
 - **Adjust the result to suit the footage.** Tune motion smoothing, foot contact correction and ground height. Enable HaMeR for more detailed finger motion. Fixed camera is the default; use moving camera mode when the camera clearly rotates horizontally, tilts or rolls.
 - **Run locally.** Install the inference runtime and model files as needed. Models load when generation starts. Once set up, the app can process videos offline. The interface is available in 简体中文, 繁體中文, English, 日本語, 한국어, Русский and Français. It remembers your language after you close it.
-- **Motion export.** Export FlowHMR, Mixamo or MetaHuman FBX, MMD VMD, or NPZ. FlowHMR and Mixamo FBX can include a mesh and a T-pose or A-pose at frame **−1**. See the [export guide](../retarget-export.md).
-- **Custom characters.** Preview PMX and skinned Mixamo or MetaHuman FBX, assign a different character to each person, and save bone adjustments. Compatible PMX rigs can switch between native IK and FK.
+- **Motion export.** Export FlowHMR, Mixamo, MetaHuman, or Maya AdvancedSkeleton FBX, MMD VMD, VRM Animation (VRMA), or NPZ. FlowHMR and Mixamo FBX can include a mesh and a T-pose or A-pose at frame **−1**. See the [export guide](../retarget-export.md).
+- **Custom characters.** Preview PMX, VRM 0.x or 1.0, and skinned Mixamo or MetaHuman FBX. Assign a different character to each person and save bone adjustments. Compatible PMX rigs can switch between native IK and FK.
 
 ## Example videos
 
@@ -32,7 +38,7 @@ To try the app yourself, use the repository's [sample footage](../../assets/exam
 1. On 64-bit Windows 10 or 11, extract the entire `FlowHMR-Windows.zip` archive, open the extracted `FlowHMR` folder and double-click `FlowHMR.exe`. The base package includes Python, the desktop interface and the FBX export component.
 2. Install a compatible GPU driver, then open **Runtime** (运行环境) in the upper-right corner to download and enable the matching runtime. For NVIDIA, choose CUDA; CUDA 12.8 is recommended for the RTX 50 series. If your AMD Radeon RX 9000 series GPU uses `gfx1201`, follow the experimental ROCm setup below.
 3. Open **Models** and choose **Download all public models** (下载全部公开模型), or download them one by one. The app verifies the files before putting them in `models/`. SAM 3D Body and VGGT-Omega come from ModelScope. If you don't need finger refinement, you can skip HaMeR when downloading individually. Use the table below for the official models that require sign-in.
-4. Drop a video into the app, select people and a frame range, then start generation. Preview the finished motion and export FBX, VMD, or NPZ from the menu.
+4. Drop a video into the app, select people and a frame range, then start generation. Preview the finished motion and export FBX, VMD, VRMA, or NPZ from the menu.
 
 ### AMD Radeon RX 9000 series (experimental support)
 

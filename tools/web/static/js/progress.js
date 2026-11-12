@@ -182,7 +182,7 @@ export function initProgress() {
     showUploading(name, frac) {
       show("jobCard");
       for (const id of ["btnRerun", "btnAlignScene", "btnSafeRerun", "btnStopRun", "queueBox",
-        "jobCamera", "jobSamBatch", "jobHamer", "jobCorrection", "jobError"]) show(id, false);
+        "jobLongMotion", "jobCamera", "jobSamBatch", "jobHamer", "jobCorrection", "jobError"]) show(id, false);
       setText($("jobName"), name);
       setBadge("uploading");
       setText($("jobMsg"), m("job.importing", { percent: Math.round(frac * 100) }));
@@ -205,6 +205,9 @@ export function initProgress() {
         ? m("progress.ahead", { count: job.queue_position }) : m("progress.starting_soon"));
       renderStages(job.stages, job.now);
       setText($("jobMsg"), () => jobMessage(job));
+      setText($("jobLongMotion"), job.long_motion_frames
+        ? m("progress.long_motion", { frames: job.long_motion_frames }) : "");
+      show("jobLongMotion", !!job.long_motion_frames);
       renderCamera(job.camera);
       renderBatch(job.sam_batch);
       renderHamer(job.hamer_report);
@@ -219,7 +222,7 @@ export function initProgress() {
     showError(msg) {
       show("jobCard");
       for (const id of ["btnRerun", "btnAlignScene", "btnSafeRerun", "btnStopRun",
-        "jobCamera", "jobSamBatch", "jobHamer", "jobCorrection"]) show(id, false);
+        "jobLongMotion", "jobCamera", "jobSamBatch", "jobHamer", "jobCorrection"]) show(id, false);
       setBadge("failed");
       setText($("jobError"), msg);
       setAttr($("jobError"), "title", "");

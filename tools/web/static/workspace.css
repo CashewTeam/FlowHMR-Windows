@@ -80,7 +80,7 @@ body { height: 100dvh; }
   display: block; width: auto; min-width: 0; min-height: 0; padding: 0; overflow: auto;
   background: var(--card); border: 1px solid var(--card-border); scrollbar-width: thin;
 }
-.source-editor { grid-area: source; container-type: size; }
+.source-editor { grid-area: source; container: source-editor / size; }
 .properties-editor { grid-area: properties; display: grid; grid-template-rows: var(--history-size, 30%) 4px minmax(0, 1fr); overflow: hidden; gap: 0; }
 .property-content, .history-scroll { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .card { backdrop-filter: none; }
@@ -96,7 +96,49 @@ body { height: 100dvh; }
 .card-head { margin-bottom: 9px; }
 .sidebar .dropzone, .sidebar .file-row, .sidebar .person, .sidebar .run, .sidebar .preview-stage { border-radius: 4px; }
 .source-editor .preview-stage { aspect-ratio: var(--video-ratio, 16 / 10); max-height: clamp(115px, calc(100cqh - 135px), 760px); }
-.source-editor:has(#personCard.attention) .preview-stage { max-height: clamp(125px, 56cqh, 470px); }
+/* Keep the video and confirmation in view while the candidate tracks scroll. */
+.source-editor:has(#personCard.attention) { display: flex; flex-direction: column; gap: 0; overflow: hidden; }
+.source-editor:has(#personCard.attention) .source-video-card {
+  display: flex; flex-direction: column; min-height: 0; padding: 6px 8px;
+}
+.source-editor:has(#personCard.attention) .source-video-card > :not(.preview-stage) { flex: none; }
+.source-editor:has(#personCard.attention) .source-video-card .card-head { margin-bottom: 3px; }
+.source-editor:has(#personCard.attention) .preview-stage {
+  min-height: 0; margin-top: 4px; max-height: min(56cqh, 470px);
+}
+.source-editor:has(#personCard.attention) .source-video-card .dropzone { padding: 3px 6px; }
+.source-editor:has(#personCard.attention) .source-video-card :is(.drop-icon, .drop-sub) { display: none; }
+.sidebar #personCard.attention {
+  display: flex; flex-direction: column; flex: 1 0 max(min(182px, 58cqh), min(250px, 48cqh));
+  min-height: 0; padding: 6px 8px;
+}
+#personCard.attention > :not(.person-list) { flex: none; }
+#personCard.attention :is(.card-title, .card-help, .person-list) { margin-bottom: 4px; }
+#personCard.attention .person-list {
+  min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 3px;
+}
+#personCard.attention .person { flex: none; padding-block: 4px; }
+#personCard.attention .person-thumb { width: 32px; height: 42px; }
+#personCard.attention .person-name, #personCard.attention .person-tag { white-space: nowrap; }
+#personCard.attention .person-tag { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#personCard.attention #personConfirm { padding: 4px 6px; font-size: 12px; }
+@container source-editor (max-height: 380px) {
+  #personCard.attention #personCount { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@container source-editor (max-height: 300px) {
+  .source-editor:has(#personCard.attention) .source-video-card:has(#previewBox:not(.hidden)) .dropzone { display: none; }
+  #personCard.attention #personTitle {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+}
+@container source-editor (max-width: 205px) {
+  #personCard.attention .person { gap: 6px; padding-inline: 5px 26px; }
+  #personCard.attention .person-thumb { width: 26px; height: 36px; }
+  #personCard.attention .person-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #personCard.attention :is(.person-dot, .person-tag) { display: none; }
+  #personCard.attention .person-check { width: 16px; height: 16px; right: 5px; }
+  #personCard.attention #personConfirm { padding-inline: 3px; font-size: 11px; }
+}
 #previewIssue { margin: 7px 0 0; }
 .dropzone { padding: 22px 10px; border-width: 1px; }
 .drop-title { color: var(--text); font-size: 13px; font-weight: 600; }
@@ -205,6 +247,21 @@ body { height: 100dvh; }
 }
 .model-dialog[open] { display: flex; flex-direction: column; }
 .model-dialog::backdrop { background: #0008; }
+.job-warning { color: var(--model-warning); }
+.update-button.has-update { border-color: var(--active); }
+.update-dialog { position: fixed; inset: 38px 12px auto auto; z-index: 35; width: min(370px, calc(100vw - 24px)); margin: 0; }
+.update-details { display: grid; gap: 6px; padding: 12px; font-size: 12px; min-height: 0; overflow: auto; }
+.update-details p { margin: 0; }
+.update-notes { margin-top: 4px; padding-top: 7px; border-top: 1px solid var(--line); }
+.update-notes h3 { margin: 0 0 4px; font-size: inherit; }
+#updateNotesText { max-height: min(30dvh, 216px); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+#updateVersion { color: var(--muted); }
+#updateProgress { width: 100%; height: 7px; accent-color: var(--active); }
+.update-dialog a { color: var(--text); }
+.update-history { margin-top: 4px; padding-top: 7px; border-top: 1px solid var(--line); }
+.update-version-actions, .fbx-template-controls { display: flex; align-items: center; gap: 7px; margin-top: 5px; }
+.update-version-actions select, .fbx-template-controls input { flex: 1; min-width: 0; }
+#updateLegacyNote { color: var(--muted); margin-top: 5px; }
 .model-dialog-head, .model-dialog-foot, .model-location { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
 .model-dialog-head, .model-dialog-foot { justify-content: space-between; background: var(--editor-head); }
 .model-dialog-head { border-bottom: 1px solid var(--line); }
@@ -451,6 +508,9 @@ body { height: 100dvh; }
   }
   .sidebar { overflow: visible; }
   .source-editor { container-type: normal; }
+  .source-editor:has(#personCard.attention) {
+    height: clamp(225px, calc(100dvh - 40px), 640px); container-type: size;
+  }
   .source-editor .preview-stage { max-height: 50dvh; }
   .properties-editor { display: block; }
   .property-content { overflow: visible; }

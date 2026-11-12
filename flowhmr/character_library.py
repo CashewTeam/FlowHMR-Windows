@@ -44,9 +44,10 @@ def _pose(value):
             "ikMode": "ik" if value.get("ikMode") == "ik" else "fk",
             "rootRotation": triple(value.get("rootRotation"), 180),
             "rootTranslation": triple(value.get("rootTranslation"), 5)}
-    baseline = value.get("pmxBaselineVersion")
-    if type(baseline) is int and baseline == 1:
-        pose["pmxBaselineVersion"] = baseline
+    for key in ("pmxBaselineVersion", "vrmBaselineVersion"):
+        baseline = value.get(key)
+        if type(baseline) is int and baseline == 1:
+            pose[key] = baseline
     return pose
 
 

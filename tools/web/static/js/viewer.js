@@ -447,7 +447,7 @@ export function initViewer(preview) {
     const { points, lines, cones, stride, joints, edges, parents } = skeleton;
     if (poseMenu.open && actor.character) {
       const { asset, mesh, rig } = actor.character;
-      const bones = asset.kind === "fbx" ? asset.getRig(mesh).bones : mesh.skeleton.bones;
+      const bones = asset.kind === "pmx" ? mesh.skeleton.bones : asset.getRig(mesh).bones;
       actor.group.updateWorldMatrix(true, false);
       mesh.updateMatrixWorld(true);
       inverseActor.copy(actor.group.matrixWorld).invert();
@@ -901,7 +901,7 @@ export function initViewer(preview) {
       t("view.scene"),
       [state.scene ? t("person.count", { count: actors.length }) : "",
         ...(custom > 1 ? [t("character.custom_count", { count: custom })]
-          : asset ? [({ mixamo: "Mixamo", metahuman: "MetaHuman" })[asset.profile] ?? "PMX", asset.name]
+          : asset ? [({ mixamo: "Mixamo", metahuman: "MetaHuman", vrm: "VRM" })[asset.profile] ?? "PMX", asset.name]
             : ["SMPL-H", t(`view.${state.bodyVariant}`)])].filter(Boolean).join(" · "),
     ].join(" | "));
   }
@@ -991,7 +991,7 @@ export function initViewer(preview) {
       const selected = new Set(people.map(String));
       const targets = actors.filter((actor) => !state.scene || selected.has(String(actor.number)));
       if ((state.scene && targets.length !== selected.size) ||
-          targets.some((actor) => !actor.character || actor.character.asset.kind === "fbx")) return [];
+          targets.some((actor) => actor.character?.asset.kind !== "pmx")) return [];
       return targets.map((actor) => ({
         person: actor.number,
         start: state.scene ? sourceStart(actor.meta) : 0,

@@ -60,7 +60,7 @@ export function initPoseEditor(onChange, onActor) {
     const { asset, mesh, rig } = character ?? {};
     const i = rig?.sourceToTarget[id];
     if (!(i >= 0)) return "";
-    return asset.kind === "fbx" ? asset.getRig(mesh).bones[i]?.name : asset.rest.bones[i]?.name;
+    return asset.kind === "pmx" ? asset.rest.bones[i]?.name : asset.getRig(mesh).bones[i]?.name;
   }
 
   function canSelect(id) {

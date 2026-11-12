@@ -1,6 +1,7 @@
-import { Box3, Group, Matrix4, Quaternion, Skeleton, Texture, Vector3 } from "three";
+import { Box3, Group, Matrix4, Quaternion, Texture, Vector3 } from "three";
 import { FBXLoader } from "../vendor/three/fbx/loaders/FBXLoader.js";
 import { TGALoader } from "../vendor/three/mmd/loaders/TGALoader.js";
+import { cloneSkinnedHierarchy } from "./character-skeleton.js";
 
 const MAX_FBX_BYTES = 256 * 1024 * 1024;
 const Y_UP = new Vector3(0, 1, 0);
@@ -409,24 +410,7 @@ function restPose(rig, norm, bounds) {
 }
 
 function cloneActor(source, primary, others) {
-  const root = source.clone(true);
-  const copies = new Map();
-  const pair = (a, b) => {
-    copies.set(a, b);
-    a.children.forEach((child, index) => pair(child, b.children[index]));
-  };
-  pair(source, root);
-  const skeletons = new Map();
-  for (const [original, clone] of copies) {
-    if (!isUsableSkin(original)) continue;
-    if (!skeletons.has(original.skeleton)) {
-      skeletons.set(original.skeleton, new Skeleton(
-        original.skeleton.bones.map((bone) => copies.get(bone)),
-        original.skeleton.boneInverses.map((matrix) => matrix.clone()),
-      ));
-    }
-    clone.bind(skeletons.get(original.skeleton), original.bindMatrix);
-  }
+  const { root, copies, skeletons } = cloneSkinnedHierarchy(source, isUsableSkin);
   const bindRig = (rig) => ({
     bones: rig.bones.map((bone) => copies.get(bone)),
     mesh: copies.get(rig.mesh),
@@ -435,7 +419,6 @@ function cloneActor(source, primary, others) {
     role: rig.role,
     profile: rig.profile,
   });
-  root.updateMatrixWorld(true);
   return {
     root,
     rig: { ...bindRig(primary), additionalRigs: others.map(bindRig) },

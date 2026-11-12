@@ -3,7 +3,9 @@ import { Euler, Quaternion, Vector3 } from "three";
 export const ROTATION_LIMIT = 180;
 export const TRANSLATION_LIMIT = 5;
 export const PMX_BASELINE_VERSION = 1;
+const VRM_BASELINE_VERSION = 1;
 const DEG = Math.PI / 180;
+const NECK_JOINT = 12;
 const HEAD_JOINT = 15;
 const HEAD_X_BASE = -15;
 const OFFSET_VERSION = 2;
@@ -24,6 +26,30 @@ export function normalizePoseOffsets(settings) {
     rootRotation: triple(settings?.rootRotation, ROTATION_LIMIT),
     rootTranslation: triple(settings?.rootTranslation, TRANSLATION_LIMIT) };
   if (settings?.pmxBaselineVersion === PMX_BASELINE_VERSION) pose.pmxBaselineVersion = PMX_BASELINE_VERSION;
+  if (settings?.vrmBaselineVersion === VRM_BASELINE_VERSION) pose.vrmBaselineVersion = VRM_BASELINE_VERSION;
+  return pose;
+}
+
+export function normalizeVrmPoseOffsets(settings, neckBaseline) {
+  const pose = normalizePoseOffsets(settings);
+  if (pose.vrmBaselineVersion === VRM_BASELINE_VERSION) return pose;
+  pose.vrmBaselineVersion = VRM_BASELINE_VERSION;
+  const head = pose.rotations[HEAD_JOINT];
+  if (head) {
+    head[0] += HEAD_X_BASE;
+    if (head[0] < -180) head[0] += 360;
+    if (!nonzero(head)) delete pose.rotations[HEAD_JOINT];
+  }
+  const neck = pose.rotations[NECK_JOINT];
+  if (neck && neckBaseline) {
+    // Keep the old effective pose when a saved adjustment used the raw axes.
+    const euler = new Euler(neck[0] * DEG, neck[1] * DEG, neck[2] * DEG, "XYZ");
+    const adjusted = neckBaseline.clone().invert().multiply(new Quaternion().setFromEuler(euler));
+    euler.setFromQuaternion(adjusted.normalize());
+    const rotation = [euler.x, euler.y, euler.z].map((angle) => Number((angle / DEG).toFixed(6)));
+    if (nonzero(rotation)) pose.rotations[NECK_JOINT] = rotation;
+    else delete pose.rotations[NECK_JOINT];
+  }
   return pose;
 }
 
@@ -46,7 +72,7 @@ export function readStoredPose(key) {
 export const storedPose = (offsets) => JSON.stringify({ ...offsets, version: OFFSET_VERSION });
 
 /** Reflect rotation offsets through the character's left/right plane in bind axes. */
-export function makePoseOffsets(bindForJoint, lateral) {
+export function makePoseOffsets(bindForJoint, lateral, { headPitch = HEAD_X_BASE } = {}) {
   const axis = lateral.clone().normalize();
   const euler = new Euler(0, 0, 0, "XYZ"), vector = new Vector3(), reflected = new Vector3();
   const mirrored = new Quaternion(), inverse = new Quaternion();
@@ -79,10 +105,12 @@ export function makePoseOffsets(bindForJoint, lateral) {
     set(settings) {
       const pose = normalizePoseOffsets(settings);
       // Apply the neutral head correction in the same local axes as the sliders.
-      const [x, y, z] = pose.rotations[HEAD_JOINT] ?? ZERO;
-      const head = [x + HEAD_X_BASE, y, z];
-      if (nonzero(head)) pose.rotations[HEAD_JOINT] = head;
-      else delete pose.rotations[HEAD_JOINT];
+      if (headPitch) {
+        const [x, y, z] = pose.rotations[HEAD_JOINT] ?? ZERO;
+        const head = [x + headPitch, y, z];
+        if (nonzero(head)) pose.rotations[HEAD_JOINT] = head;
+        else delete pose.rotations[HEAD_JOINT];
+      }
       joints.clear();
       for (const [id, a] of Object.entries(pose.rotations)) {
         const j = Number(id), bind = bindForJoint(j), q = fromDegrees(new Quaternion(), a);

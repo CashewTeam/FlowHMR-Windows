@@ -98,7 +98,7 @@ These model settings are shared by CLI and Web inference. See
 
 | Model setting | Environment variable | Default | Description |
 |---|---|---|---|
-| `attention_backend` | `FLOWHMR_ATTENTION_BACKEND` | `original` | Set `query_batched` for lower-memory local attention during evaluation |
+| `attention_backend` | `FLOWHMR_ATTENTION_BACKEND` | `auto` | Use query batches for `narrowband_v2m` inference above 5,000 motion frames. Set `query_batched` to use them for shorter clips as well. |
 | `attention_query_chunk_size` | `FLOWHMR_ATTENTION_QUERY_CHUNK_SIZE` | `256` | Positive number of queries per attention batch |
 
 Model settings belong under `network_module_args` and override the respective

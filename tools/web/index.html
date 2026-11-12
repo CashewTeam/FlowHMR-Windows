@@ -24,6 +24,7 @@
           <button type="button" id="menuImport" data-i18n="menu.import">导入视频…</button>
           <button type="button" id="menuFbx" disabled data-i18n="menu.export_motion">导出动作…</button>
           <button type="button" id="menuNpz" disabled data-i18n="menu.export_npz">导出 NPZ…</button>
+          <button type="button" id="menuUpdates" class="hidden" data-i18n="update.check">检查更新…</button>
         </div>
       </details>
       <span class="workspace-tab" data-i18n="menu.layout">布局</span>
@@ -38,6 +39,7 @@
         <option value="ru" lang="ru">Русский</option>
         <option value="fr" lang="fr">Français</option>
       </select>
+      <button type="button" class="model-info model-button update-button hidden" id="btnUpdate" aria-haspopup="dialog" aria-controls="updateDialog" data-i18n="update.check">检查更新…</button>
       <div class="theme-options" id="themeOptions" role="group" aria-label="Color theme" data-i18n-label="theme.label">
         <button type="button" class="theme-option" data-theme-choice="light" title="Light mode" aria-label="Light mode" aria-pressed="false" data-i18n-title="theme.light" data-i18n-label="theme.light">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>
@@ -65,7 +67,7 @@
   <!-- ============================================================ left: input & controls -->
   <aside class="sidebar source-editor" aria-label="视频编辑器" data-i18n-label="source.title">
     <!-- Video: upload + preview with person boxes -->
-    <section class="card">
+    <section class="card source-video-card">
       <div class="card-head">
         <h3 class="card-title editor-title"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="m7 6 3 2-3 2z"/></svg><span data-i18n="source.title">视频编辑器</span></h3>
         <span class="preview-title" id="previewTitle"></span>
@@ -278,6 +280,7 @@
       </div>
       <ol class="stages" id="stageList"></ol>
       <p class="job-msg" id="jobMsg"></p>
+      <p class="setting-help job-warning hidden" id="jobLongMotion"></p>
       <p class="setting-help hidden" id="jobCamera"></p>
       <p class="setting-help hidden" id="jobSamBatch"></p>
       <p class="setting-help hidden" id="jobHamer"></p>
@@ -381,7 +384,7 @@
       <div class="downloads">
         <button type="button" class="editor-icon" id="toggleGrid" aria-pressed="true" aria-label="显示地面网格" title="显示地面网格" data-i18n-label="view.grid" data-i18n-title="view.grid"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h12v12H2zM6 2v12m4-12v12M2 6h12M2 10h12"/></svg></button>
         <button type="button" class="editor-icon" id="toggleWire" aria-pressed="false" aria-label="线框显示" title="线框显示" data-i18n-label="view.wire" data-i18n-title="view.wire"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.5" ry="6"/><path d="M2 8h12"/></svg></button>
-        <button type="button" class="btn-secondary small hidden" id="dlFbx" disabled data-i18n-title="export.motion">FBX / VMD</button>
+        <button type="button" class="btn-secondary small hidden" id="dlFbx" disabled data-i18n="export.motion">导出动作</button>
         <a class="btn-primary small hidden" id="dlNpz" href="#" download title="SMPL-H motion: poses (T,52,3), trans (T,3), betas" data-i18n-title="export.npz_hint">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           NPZ
@@ -505,6 +508,42 @@
   </footer>
 </dialog>
 
+<dialog id="updateDialog" class="model-dialog update-dialog" aria-labelledby="updateTitle">
+  <header class="model-dialog-head">
+    <h2 id="updateTitle" data-i18n="update.title">程序更新</h2>
+    <form method="dialog"><button type="submit" class="editor-icon" aria-label="关闭" title="关闭" data-i18n-label="common.close" data-i18n-title="common.close">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+    </button></form>
+  </header>
+  <div class="update-details">
+    <p id="updateVersion"></p>
+    <p id="updateStatus" role="status"></p>
+    <section class="update-notes hidden" id="updateNotes" aria-labelledby="updateNotesTitle">
+      <h3 id="updateNotesTitle" data-i18n="update.notes">更新内容</h3>
+      <p id="updateNotesText" tabindex="0"></p>
+    </section>
+    <progress id="updateProgress" class="hidden" aria-label="更新进度" data-i18n-label="update.progress"></progress>
+    <div class="update-history hidden" id="updateHistory">
+      <label for="updateVersionSelect" data-i18n="update.history">历史版本</label>
+      <div class="update-version-actions">
+        <select class="input" id="updateVersionSelect"></select>
+        <button type="button" class="btn-secondary small hidden" id="updateApplyVersion" data-i18n="update.use_version">使用此版本</button>
+        <a class="hidden" id="updateOlderZip" target="_blank" rel="noopener noreferrer" data-i18n="update.older_zip">下载 ZIP</a>
+      </div>
+      <p class="hidden" id="updateLegacyNote" data-i18n="update.legacy_hint">此版本请下载后解压运行。</p>
+    </div>
+  </div>
+  <footer class="model-dialog-foot">
+    <a href="https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases" target="_blank" rel="noopener noreferrer" data-i18n="update.releases">发布页</a>
+    <div class="model-actions">
+      <button type="button" class="btn-secondary small" id="updateCheck" data-i18n="common.refresh">刷新</button>
+      <button type="button" class="btn-secondary small" id="updateManual" data-i18n="update.manual" data-i18n-title="update.manual_hint">手动更新…</button>
+      <button type="button" class="btn-secondary small hidden" id="updateStop" data-i18n="download.stop">停止下载</button>
+      <button type="button" class="btn-primary small hidden" id="updateDownload" data-i18n="download.download">下载</button>
+    </div>
+  </footer>
+</dialog>
+
 <dialog id="runtimeDialog" class="model-dialog runtime-dialog" aria-labelledby="runtimeTitle">
   <header class="model-dialog-head">
     <h2 id="runtimeTitle" data-i18n="runtime.title">运行环境</h2>
@@ -542,7 +581,9 @@
         <option value="flowhmr">FlowHMR FBX</option>
         <option value="mixamo">Mixamo FBX</option>
         <option value="metahuman">MetaHuman FBX</option>
+        <option value="maya_adv">Maya AdvancedSkeleton FBX</option>
         <option value="vmd">MMD VMD</option>
+        <option value="vrma">VRM Animation (.vrma)</option>
       </select>
     </label>
     <p class="setting-help export-format-hint" id="motionExportHint"></p>
@@ -570,10 +611,14 @@
       </label>
       <p class="setting-help" data-i18n="export.reference_hint">参考姿势是 FBX 第 −1 帧的关键帧。Blender 默认导入后在第 0 帧，需切到姿态位置查看。</p>
     </div>
-    <label class="field fbx-template hidden" id="metaHumanTemplateRow">
-      <span data-i18n="export.metahuman_template">目标身体骨架（FBX）</span>
-      <input class="input" type="file" id="metaHumanTemplate" accept=".fbx">
-    </label>
+    <div class="field fbx-template hidden" id="fbxTemplateRow">
+      <label for="fbxTemplate" id="fbxTemplateLabel" data-i18n="export.metahuman_template">目标身体骨架（FBX）</label>
+      <div class="fbx-template-controls">
+        <input class="input" type="file" id="fbxTemplate" accept=".fbx">
+        <button type="button" class="btn-secondary small hidden" id="fbxTemplateClear" data-i18n="export.clear_template">清除模板</button>
+      </div>
+      <p class="setting-help hidden" id="fbxTemplateHint" data-i18n="export.mixamo_hint">选择目标角色的原版 Mixamo FBX。导出会保留模板自带的蒙皮。留空时使用通用 Mixamo 骨架。</p>
+    </div>
     <p class="error hidden" id="motionExportError" role="alert"></p>
     <div class="fbx-export-actions">
       <button class="btn-secondary small" value="cancel" data-i18n="common.cancel">取消</button>
@@ -585,7 +630,7 @@
 <dialog id="previewCharacterDialog" class="fbx-export-dialog" aria-labelledby="previewCharacterTitle">
   <form method="dialog">
     <h3 class="card-title" id="previewCharacterTitle" data-i18n="character.title">预览角色</h3>
-    <p class="setting-help" data-i18n="character.guide">选择 PMX 或带蒙皮的 Mixamo / MetaHuman FBX。外置贴图放在模型旁边，程序会按引用加载。</p>
+    <p class="setting-help" data-i18n="character.guide">选择 PMX、VRM 或带蒙皮的 Mixamo / MetaHuman FBX。外置贴图请放在 PMX 或 FBX 旁边。</p>
     <label class="character-selection hidden" id="characterActorRow">
       <span data-i18n="character.actor">人物</span>
       <select class="input" id="characterActor"></select>
@@ -605,7 +650,7 @@
     <p class="setting-help" data-i18n="character.library_hint">在桌面版应用新角色时，模型和引用的贴图会存入 models/characters。角色选择和骨骼调节会自动记住。</p>
     <div class="character-file">
       <input type="file" id="pmxFolder" webkitdirectory multiple hidden>
-      <input type="file" id="characterModelFile" accept=".pmx,.fbx" hidden>
+      <input type="file" id="characterModelFile" accept=".pmx,.vrm,.fbx" hidden>
       <button type="button" class="btn-secondary small" id="characterBrowse" data-i18n="character.pick">选择模型文件…</button>
       <button type="button" class="btn-secondary small hidden" id="pmxBrowse" data-i18n="character.folder">选择模型文件夹…</button>
       <select class="input hidden" id="pmxFile" data-i18n-label="character.file" aria-label="角色模型"></select>

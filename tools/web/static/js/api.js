@@ -120,18 +120,18 @@ export const fbxUrl = (id, withSkin, body = "neutral", people = [], firstPose = 
   for (const person of people) query.append("person", String(person));
   return `/api/jobs/${id}/fbx?${query}`;
 };
-export const vmdUrl = (id, people = []) => {
+export const motionUrl = (id, format, people = []) => {
   const query = new URLSearchParams();
   for (const person of people) query.append("person", String(person));
-  return `/api/jobs/${id}/vmd${people.length ? `?${query}` : ""}`;
+  return `/api/jobs/${id}/${format}${people.length ? `?${query}` : ""}`;
 };
-export async function exportMetaHuman(id, people, template, signal) {
+export async function exportTemplateFbx(id, people, profile, template, signal) {
   const body = new FormData();
   body.append("template", template);
-  const response = await request(fbxUrl(id, false, "source", people, "none", "metahuman"), { method: "POST", body, signal });
+  const response = await request(fbxUrl(id, false, "source", people, "none", profile), { method: "POST", body, signal });
   const header = response.headers.get("Content-Disposition") ?? "";
   const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header)?.[1];
-  let filename = /filename="([^"]+)"|filename=([^;]+)/i.exec(header)?.slice(1).find(Boolean) ?? "metahuman.fbx";
+  let filename = /filename="([^"]+)"|filename=([^;]+)/i.exec(header)?.slice(1).find(Boolean) ?? `${profile}.fbx`;
   if (encoded) {
     try { filename = decodeURIComponent(encoded); } catch { /* use the plain name */ }
   }

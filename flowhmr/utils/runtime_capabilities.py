@@ -4,7 +4,7 @@ from functools import lru_cache
 from importlib.util import find_spec
 
 
-MAX_MOTION_FRAMES = 5000  # positional encoding table in the FlowHMR network
+LONG_MOTION_EXPERIMENTAL_THRESHOLD = 5000
 SOLE_FIT_REFERENCE_STRENGTH = 0.6  # equivalent to the original on/off option
 
 

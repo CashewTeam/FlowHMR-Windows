@@ -5,6 +5,7 @@
 - The unmodified Microsoft WebView2 Evergreen Standalone Installer and Microsoft Visual C++ Redistributable in `runtime/prerequisites` are provided under Microsoft's terms. See the [WebView2 distribution guide](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution) and the [Visual C++ redistributable documentation](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist).
 - FlowHMR starts FFmpeg as a separate process for media handling. The packaged `imageio-ffmpeg` wheel supplies Gyan Doshi's FFmpeg 9.0.2 Essentials executable, [distributed under GPLv3](https://www.gyan.dev/ffmpeg/builds/#about-these-builds). `FFmpeg-9.0.2-Source.tar.gz` accompanies the release and contains the [matching FFmpeg source revision](https://github.com/FFmpeg/FFmpeg/tree/946fcce07b). See also the [provider's release and dependency list](https://www.gyan.dev/ffmpeg/builds/) and the build configuration printed by `ffmpeg -version`.
 - The Windows bundle uses the Autodesk FBX Python runtime `fbx.pyd` from the pinned `fbxsdkpy` 2020.1.post2 Windows x64 wheel referenced by [upstream FlowHMR](https://github.com/flowhmr/flowhmr/blob/main/docs/install.md). This runtime is provided under [Autodesk's FBX SDK terms](https://aps.autodesk.com/developer/overview/fbx-sdk).
+- The VRM preview bundles Three.js r160 loaders and pixiv three-vrm 3.5.5 under their MIT licenses. [Versions and licenses](tools/web/static/vendor/three/vrm/README.md)
 
 ## Autodesk FBX runtime notice
 

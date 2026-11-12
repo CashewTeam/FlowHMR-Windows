@@ -11,11 +11,13 @@ export function initMotionExport(getBodyVariant, viewer) {
   const dialog = $("fbxExportDialog"), button = $("dlFbx"), menu = $("menuFbx");
   const format = $("motionExportFormat"), confirm = $("fbxConfirm");
   const skin = $("fbxWithSkin"), pose = $("fbxFirstPose"), peopleField = $("fbxPeople");
-  const template = $("metaHumanTemplate"), error = $("motionExportError");
+  const template = $("fbxTemplate"), error = $("motionExportError");
+  const clearTemplate = $("fbxTemplateClear"), templateHint = $("fbxTemplateHint");
   const vmdTarget = $("vmdTarget"), characterOption = $("vmdTargetCharacter");
   const chooseCharacter = $("vmdChooseCharacter");
   const formats = [...format.options];
   let preferred = localStorage.getItem(FORMAT_STORAGE) || "flowhmr";
+  if (preferred === "mixamo_iclone") preferred = "mixamo";
   let result = null, pending = null, entries = [], multiPeople = [], single = false;
 
   skin.checked = localStorage.getItem(SKIN_STORAGE) === "on";
@@ -30,7 +32,7 @@ export function initMotionExport(getBodyVariant, viewer) {
     const keep = next ? [multiPeople[0] ?? entries[0]?.input.value] : multiPeople;
     for (const { input } of entries) {
       input.type = next ? "radio" : "checkbox";
-      if (next) input.name = "metahuman-person"; else input.removeAttribute("name");
+      if (next) input.name = "fbx-template-person"; else input.removeAttribute("name");
       input.checked = keep.includes(input.value);
     }
     single = next;
@@ -43,24 +45,37 @@ export function initMotionExport(getBodyVariant, viewer) {
     const file = template.files[0];
     return file && /\.fbx$/i.test(file.name) && file.size > 0 && file.size <= TEMPLATE_MAX_MB * 1024 * 1024;
   }
+  const usesTemplate = (profile) => profile === "metahuman" || (profile === "mixamo" && template.files.length > 0);
   function sync() {
     const profile = format.value;
-    const meta = profile === "metahuman";
-    selectMode(meta);
-    show("standardFbxOptions", profile === "flowhmr" || profile === "mixamo");
-    show("metaHumanTemplateRow", meta);
+    const mixamo = profile === "mixamo";
+    const useTemplate = usesTemplate(profile);
+    const showTemplate = mixamo || profile === "metahuman";
+    const singlePerson = useTemplate || profile === "maya_adv";
+    selectMode(singlePerson);
+    show("standardFbxOptions", !useTemplate && (profile === "flowhmr" || mixamo));
+    show("fbxTemplateRow", showTemplate);
+    show(clearTemplate, showTemplate && template.files.length > 0);
+    if (showTemplate) setText($("fbxTemplateLabel"), m(`export.${profile}_template`));
+    show(templateHint, mixamo);
+    if (mixamo) template.setAttribute("aria-describedby", templateHint.id);
+    else template.removeAttribute("aria-describedby");
     show("vmdOptions", profile === "vmd");
     const roles = targets();
     characterOption.disabled = characterOption.hidden = !roles.length;
     if (roles.length) setText(characterOption, roles.length === 1
       ? m("export.vmd_character", { name: roles[0].asset.name }) : m("export.vmd_characters"));
     else vmdTarget.value = "generic";
-    const hint = profile === "vmd" ? (vmdTarget.value === "target" ? "vmd_target" : "vmd_generic") : profile;
-    setText($("motionExportHint"), profile ? m(`export.${hint}_hint`) : "");
-    setText($("exportPeopleLabel"), m(meta ? "export.select_person" : "export.select_people"));
+    let hint = profile;
+    if (profile === "vmd") hint = vmdTarget.value === "target" ? "vmd_target" : "vmd_generic";
+    if (mixamo) hint = useTemplate ? "mixamo_target" : "";
+    setText($("motionExportHint"), hint ? m(`export.${hint}_hint`) : "");
+    setText($("exportPeopleLabel"), m(singlePerson ? "export.select_person" : "export.select_people"));
     const busy = !!pending;
     format.disabled = peopleField.disabled = template.disabled = vmdTarget.disabled = chooseCharacter.disabled = busy;
-    confirm.disabled = !result || !profile || busy || (entries.length > 0 && !selected().length) || (meta && !validTemplate());
+    clearTemplate.disabled = busy;
+    confirm.disabled = !result || !profile || busy || (entries.length > 0 && !selected().length)
+      || (useTemplate && !validTemplate());
     setText(confirm, m(busy ? "export.preparing" : "common.export"));
   }
   function setPeople(scene) {
@@ -117,13 +132,19 @@ export function initMotionExport(getBodyVariant, viewer) {
     vmdTarget.value = targets().length ? "target" : "generic";
     sync();
   });
-  format.addEventListener("change", () => { showError(); sync(); });
-  template.addEventListener("change", () => {
-    const file = template.files[0];
-    showError(!file || validTemplate() ? "" : file.size > TEMPLATE_MAX_MB * 1024 * 1024
-      ? m("server.metahuman_template_size", { max: TEMPLATE_MAX_MB }) : m("server.metahuman_template_required"));
+  format.addEventListener("change", () => {
+    template.value = "";
+    showError();
     sync();
   });
+  template.addEventListener("change", () => {
+    const file = template.files[0];
+    const kind = format.value;
+    showError(!file || validTemplate() ? "" : file.size > TEMPLATE_MAX_MB * 1024 * 1024
+      ? m(`server.${kind}_template_size`, { max: TEMPLATE_MAX_MB }) : m(`server.${kind}_template_required`));
+    sync();
+  });
+  clearTemplate.onclick = () => { template.value = ""; showError(); sync(); };
   dialog.addEventListener("close", () => {
     if (dialog.open) return;
     pending?.abort();
@@ -141,16 +162,20 @@ export function initMotionExport(getBodyVariant, viewer) {
     preferred = profile;
     localStorage.setItem(FORMAT_STORAGE, profile);
     const targetVmd = profile === "vmd" && vmdTarget.value === "target";
-    if (profile === "vmd" && !targetVmd) {
+    if (profile === "vrma" || (profile === "vmd" && !targetVmd)) {
       dialog.close("export");
-      download(api.vmdUrl(id, people));
+      download(api.motionUrl(id, profile, people));
       return;
     }
-    if (profile !== "metahuman" && !targetVmd) {
-      localStorage.setItem(SKIN_STORAGE, skin.checked ? "on" : "off");
-      localStorage.setItem(POSE_STORAGE, pose.value);
+    if (!usesTemplate(profile) && !targetVmd) {
+      const advancedSkeleton = profile === "maya_adv";
+      if (!advancedSkeleton) {
+        localStorage.setItem(SKIN_STORAGE, skin.checked ? "on" : "off");
+        localStorage.setItem(POSE_STORAGE, pose.value);
+      }
       dialog.close("export");
-      download(api.fbxUrl(id, skin.checked, getBodyVariant(), people, pose.value, profile));
+      download(api.fbxUrl(id, !advancedSkeleton && skin.checked, getBodyVariant(), people,
+        advancedSkeleton ? "t" : pose.value, profile));
       return;
     }
     const operation = pending = new AbortController();
@@ -159,7 +184,7 @@ export function initMotionExport(getBodyVariant, viewer) {
     try {
       const { blob, filename } = targetVmd
         ? await makePmxVmd(viewer, people, result.filename, operation.signal)
-        : await api.exportMetaHuman(id, people, template.files[0], operation.signal);
+        : await api.exportTemplateFbx(id, people, profile, template.files[0], operation.signal);
       if (pending !== operation || result?.id !== id || !dialog.open) return;
       downloadBlob(blob, filename);
     } catch (cause) {
@@ -177,7 +202,8 @@ export function initMotionExport(getBodyVariant, viewer) {
   return {
     setResult(id, job) {
       result = { id, filename: job.filename };
-      for (const option of formats) option.disabled = !(option.value === "vmd" ? job.has_vmd : job.has_fbx);
+      const availableByFormat = { vmd: !!job.has_vmd, vrma: !!job.has_vrma };
+      for (const option of formats) option.disabled = !(availableByFormat[option.value] ?? job.has_fbx);
       const available = formats.filter((option) => !option.disabled);
       format.value = (available.find((option) => option.value === preferred) ?? available[0])?.value ?? "";
       setPeople(job.scene);

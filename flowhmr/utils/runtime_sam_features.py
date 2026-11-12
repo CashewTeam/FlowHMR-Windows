@@ -23,6 +23,17 @@ if _sam_repo_dir not in sys.path:
 from sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body
 
 
+def _gpu_memory_error(error: RuntimeError) -> bool:
+    message = str(error).lower()
+    return isinstance(error, torch.cuda.OutOfMemoryError) or any(
+        phrase in message for phrase in (
+            "cuda out of memory", "cuda error: out of memory", "cuda driver error: out of memory",
+            "hip out of memory", "hip error: out of memory", "hiperroroutofmemory",
+            "cublas_status_alloc_failed", "cudnn_status_alloc_failed",
+        )
+    )
+
+
 # Visualize function (module-level cache)
 _visualize_fn_cache = None
 
@@ -140,7 +151,8 @@ class Sam3DTokenExtractor:
         return all_token, all_out
 
     def extract_frames(self, images, boxes, cameras, *, frame_batch_size=None,
-                       use_gpu_preprocess=None, hand_boxes_out=None, hand_boxes_only=False) -> Tensor:
+                       use_gpu_preprocess=None, hand_boxes_out=None, hand_boxes_only=False,
+                       merge_hands=True) -> Tensor:
         """Extract body and both hand tokens without full SAM postprocessing.
 
         Defaults use sixteen video frames per batch and GPU crop preprocessing.
@@ -164,7 +176,7 @@ class Sam3DTokenExtractor:
             stop = start + batch_size
             tokens.append(extract_tokens(
                 self.estimator, images[start:stop], boxes[start:stop], cameras[start:stop],
-                gpu_preprocess=gpu_preprocess, merge_hands=True,
+                gpu_preprocess=gpu_preprocess, merge_hands=merge_hands,
                 hand_boxes_out=hand_boxes_out, hand_boxes_only=hand_boxes_only,
             ))
         return torch.cat(tokens)
@@ -245,6 +257,9 @@ class Sam3DTokenExtractor:
         if type(batch_size) is not int or batch_size < 1:
             raise ValueError("frame_batch_size must be a positive integer")
 
+        device = torch.device(self.estimator.device)
+        retry_in_gpu_memory = on_oom_reduce is not None and device.type == "cuda"
+        low_memory = False
         total_frames = self._get_total_frames(video_path)
 
         bbox_xyxy = bbox_xyxy.detach().cpu().to(torch.float32)
@@ -298,19 +313,29 @@ class Sam3DTokenExtractor:
                         else:
                             tokens = self.extract_frames(
                                 chunk, bbox_xyxy[first:stop], K_all[first:stop],
-                                frame_batch_size=count, use_gpu_preprocess=use_gpu_preprocess,
+                                frame_batch_size=count,
+                                use_gpu_preprocess=False if low_memory else use_gpu_preprocess,
                                 hand_boxes_out=hand_boxes, hand_boxes_only=_hand_boxes_only,
+                                merge_hands=not low_memory,
                             )
-                    except torch.cuda.OutOfMemoryError:
-                        if on_oom_reduce is None or count == 1:
+                    except RuntimeError as error:
+                        if not retry_in_gpu_memory or not _gpu_memory_error(error):
+                            raise
+                        if count == 1 and (low_memory or use_mask):
                             raise
                         failed = True
                     if failed:
                         # Leave the exception scope first so its CUDA tensors can be released.
                         self._body_tokens.clear()
                         self._hand_tokens.clear()
-                        torch.cuda.empty_cache()
-                        batch_size = max(1, count // 2)
+                        with torch.cuda.device(device):
+                            torch.cuda.empty_cache()
+                        if count == 1:
+                            low_memory = True
+                            batch_size = 1
+                            print("  [sam] minimum-memory retry: CPU crops and separate hand passes", flush=True)
+                        else:
+                            batch_size = count // 2
                         on_oom_reduce(batch_size)
                         continue
                     feats.extend((tokens if _hand_boxes_only else tokens[:, :token_dim]).unbind(0))

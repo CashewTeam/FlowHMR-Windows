@@ -1,9 +1,9 @@
 import { $, el, show } from "./utils.js";
 import { appError, message as m, setText, t } from "./i18n.js";
 import * as api from "./api.js";
-import { normalizePoseOffsets, readStoredPose, storedPose } from "./pose-offsets.js";
+import { readStoredPose, storedPose } from "./pose-offsets.js";
 
-const kindOf = (name) => /\.(pmx|fbx)$/i.exec(name)?.[1]?.toLowerCase();
+const kindOf = (name) => /\.(pmx|fbx|vrm)$/i.exec(name)?.[1]?.toLowerCase();
 const emptyLibrary = () => ({ models: [], actors: {}, defaults: {}, presets: {} });
 const slot = (actor) => String(actor.number ?? "single");
 const editKey = (actor, id) => `flowhmr-character-edit:${actor.id}:${id}`;
@@ -142,7 +142,8 @@ export function initPreviewCharacter(getActors, onChange, onRestoreError) {
     const used = selected.libraryId && getActors().find(({ character }) => character?.libraryId === selected.libraryId);
     if (used) return retain(used.character.asset);
     const load = selected.kind === "fbx" ? (await import("./fbx-character-asset.js")).loadFbxCharacter
-      : (await import("./pmx-asset.js")).loadPmxAsset;
+      : selected.kind === "vrm" ? (await import("./vrm-asset.js")).loadVrmCharacter
+        : (await import("./pmx-asset.js")).loadPmxAsset;
     const options = { signal };
     const native = selected.libraryId ? await api.openLibraryCharacter(selected.libraryId, signal) : selected.native;
     let file = selected.file, resources = files;
@@ -160,16 +161,16 @@ export function initPreviewCharacter(getActors, onChange, onRestoreError) {
     const asset = await loadAsset(selected, signal);
     let mesh;
     try {
-      const isFbx = asset.kind === "fbx";
+      const isPmx = asset.kind === "pmx";
       const [retarget, motion] = await Promise.all([
-        isFbx ? import("./fbx-character-retarget.js") : import("./pmx-retarget.js"),
+        isPmx ? import("./pmx-retarget.js") : import("./fbx-character-retarget.js"),
         actor.character?.motion ?? api.getCharacterMotion(actor.id, signal),
       ]);
       signal.throwIfAborted();
       if (motion.frames !== actor.meta.num_frames) throw appError("server.pmx_motion");
       mesh = asset.clone();
-      const rig = isFbx ? retarget.createFbxCharacterRetarget(mesh, asset, motion)
-        : retarget.createPmxRetarget(mesh, asset.rest, motion);
+      const rig = isPmx ? retarget.createPmxRetarget(mesh, asset.rest, motion)
+        : retarget.createFbxCharacterRetarget(mesh, asset, motion);
       mesh.traverse((object) => {
         if (object.isMesh) object.castShadow = object.receiveShadow = true;
       });
@@ -189,12 +190,7 @@ export function initPreviewCharacter(getActors, onChange, onRestoreError) {
     return next;
   }
   function applyPose(entry, offsets) {
-    if (entry.asset.kind !== "fbx") {
-      entry.poseOffsets = entry.rig.setPoseOffsets(offsets);
-      return;
-    }
-    entry.poseOffsets = normalizePoseOffsets(offsets);
-    entry.rig.setPoseOffsets(entry.poseOffsets);
+    entry.poseOffsets = entry.rig.setPoseOffsets(offsets);
   }
   function editPose(entry, offsets) {
     applyPose(entry, offsets);

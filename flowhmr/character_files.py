@@ -9,7 +9,7 @@ from time import monotonic
 
 
 KEY_ENV = "FLOWHMR_DESKTOP_CHARACTER_KEY"
-MODEL_EXTENSIONS = {".pmx", ".fbx"}
+MODEL_EXTENSIONS = {".pmx", ".fbx", ".vrm"}
 TEXTURE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp", ".sph", ".spa", ".dds"}
 MAX_MODEL_BYTES = 256 << 20
 MAX_TEXTURE_BYTES = 64 << 20
@@ -48,7 +48,7 @@ class CharacterFiles:
             raise ValueError("Invalid character file path")
         path = Path(value)
         if not path.is_absolute() or path.suffix.lower() not in MODEL_EXTENSIONS:
-            raise ValueError("Select a PMX or FBX")
+            raise ValueError("Select a PMX, FBX or VRM")
         path = path.resolve(strict=True)
         if path.suffix.lower() not in MODEL_EXTENSIONS or not path.is_file():
             raise ValueError("Not a character file")
@@ -90,6 +90,8 @@ class CharacterFiles:
                 # Do not follow a replacement link after the file was approved.
                 return model if model.resolve(strict=True) == model and model.is_file() \
                     and 0 < model.stat().st_size <= MAX_MODEL_BYTES else None
+            if model.suffix.lower() == ".vrm":
+                return None
             parts = texture_parts(texture)
             if not parts:
                 return None
