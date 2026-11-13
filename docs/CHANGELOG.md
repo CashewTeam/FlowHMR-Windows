@@ -2,6 +2,15 @@
 
 Notable changes to FlowHMR.
 
+## [2026-11-11]
+
+### Added
+
+- Sparse SAM hand sampling (`--sam_hand_stride`; Web **SAM hand sampling**) in the CLI and Web demo:
+  decode both SAM hand decoders on one seeded frame per N frames and linearly interpolate the
+  remaining hand tokens. `2`/`4` reduce SAM time on long clips at a small finger-detail cost;
+  no new weights or runtime changes. An existing stride-1/2/4 SAM cache is invalidated automatically.
+
 ## [2026-10-31]
 
 ### Added

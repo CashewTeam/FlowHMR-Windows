@@ -62,7 +62,8 @@ def run_video(engine, video, args, tag):
 
     engine.process_video(video, OUTPUT_ROOT, seed=args.seed, cfg_scale=args.cfg_scale,
                          vggt_frame_interval=args.vggt_interval, static_camera=args.static_camera,
-                         sam_chunk_size=args.sam_chunk_size)
+                         sam_chunk_size=args.sam_chunk_size,
+                         sam_hand_stride=args.sam_hand_stride)
 
     # process_video writes <stem>_seed<k>_origin.* (raw) and, with post-processing,
     # <stem>_seed<k>.*; keep the final one as <tag>.* and drop the other.
@@ -101,6 +102,9 @@ def parse_args():
                    help="skip VGGT for a fixed camera; use a constant pose and default intrinsics")
     p.add_argument("--sam_chunk_size", type=int, default=16,
                    help="frames per SAM body batch; hand batch is twice this size (default: 16)")
+    p.add_argument("--sam_hand_stride", type=int, default=1, choices=(1, 2, 4),
+                   help="decode SAM hand decoders on one seeded frame per N frames and "
+                        "linearly interpolate the rest (1 = every frame, default)")
     p.add_argument("--overwrite", action="store_true",
                    help="recompute cached detection / camera / SAM features")
     args = p.parse_args()

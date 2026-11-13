@@ -69,8 +69,11 @@ All run settings are in the page's Settings card; see [params.md](params.md#web-
 requires the [optional dependency](install.md#optional-post-processing)).
 Defaults: **SAM chunk = 16** frames; hand batch is automatically **32** crops.
 Query batching and compile are **off**. Set **SAM chunk** to `32` for body32/hand64.
-Changing the chunk size on re-run recomputes SAM
-features while retaining matching detection and camera caches.
+**SAM hand sampling** decodes the hands every frame by default; every 2 or 4
+frames keeps only the sampled hand tokens and linearly interpolates the rest,
+which speeds up SAM on long clips at a small finger-detail cost. Changing the
+chunk size or hand sampling on re-run recomputes SAM features while retaining
+matching detection and camera caches.
 If SAM runs out of GPU memory, lower **SAM chunk**, e.g. `16` → `8` → `4`.
 
 **Static camera** is the default. It skips VGGT and uses a constant pose with

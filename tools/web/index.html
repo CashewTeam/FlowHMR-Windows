@@ -254,6 +254,19 @@
         <p class="setting-help settings-note" data-i18n="sam.setting_note">
           手动批次可按显存调整。处理起止帧在底部时间轴设置。
         </p>
+        <hr class="property-divider">
+        <div class="setting-row" id="samHandStrideRow">
+          <div>
+            <div class="setting-label" data-i18n="sam.hand_stride">SAM 手部采样</div>
+            <div class="setting-help" id="samHandStrideHint" data-i18n="sam.hand_stride_hint">建议只在开启手指精修时使用：间隔越大处理速度越快，略微降低质量</div>
+          </div>
+          <select class="input setting-select" id="optSamHandStride"
+                  data-i18n-label="sam.hand_stride" aria-describedby="samHandStrideHint">
+            <option value="1" data-i18n="sam.hand_stride_off">逐帧（关闭）</option>
+            <option value="2" data-i18n="sam.hand_stride_two">每 2 帧</option>
+            <option value="4" data-i18n="sam.hand_stride_four">每 4 帧</option>
+          </select>
+        </div>
       </div>
     </section>
 

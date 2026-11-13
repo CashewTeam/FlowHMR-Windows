@@ -45,6 +45,8 @@ export function initParams(defaults, manualBatchDefault) {
   const correctionGround = $("optCorrectionGround"), correctionHeight = $("optCorrectionHeight");
   const seed = $("optSeed"), cfg = $("optCfg"), stride = $("optVggt");
   const steps = $("optSteps"), samChunk = $("optSamChunk");
+  const samHandStride = $("optSamHandStride");
+  show("samHandStrideRow", defaults?.sam_hand_stride != null);
   const smoothingSlider = $("optSmoothing"), smoothing = $("optSmoothingValue");
   const smoothingHint = $("smoothingHint");
   let restoredSmoothingFrames = null;
@@ -108,6 +110,7 @@ export function initParams(defaults, manualBatchDefault) {
     post.set(!$("optPostprocess").disabled && !!p.postprocess);
     hamer.set(!hamerButton.disabled && !!p.hamer);
     hamerStride.value = p.hamer_stride ?? 1;
+    samHandStride.value = p.sam_hand_stride ?? 1;
     syncHamer();
     soleFit.value = p.sole_fit_strength ?? (p.sole_fit == null ? soleFit.defaultValue : p.sole_fit ? 0.6 : 0);
     syncSoleFitSlider();
@@ -147,6 +150,7 @@ export function initParams(defaults, manualBatchDefault) {
       cfg_scale: parseFloat(cfg.value),
       vggt_interval: overrides.vggt_interval ?? (cameraMode.value === "manual" ? Number(stride.value) : 0),
       sam_chunk_size: autoBatch.get() ? null : samChunkSize(samChunk.value),
+      sam_hand_stride: Number(samHandStride.value),
       steps: parseInt(steps.value, 10),
       smoothing_frames: readSmoothingFrames(),
     };
@@ -157,6 +161,7 @@ export function initParams(defaults, manualBatchDefault) {
       throw appError("server.param_bounds", { field: m("field.vggt_interval"), min: 1, max: 120 });
     }
     if (!Number.isInteger(out.steps) || out.steps < 1 || out.steps > 100) throw appError("server.param_bounds", { field: m("field.steps"), min: 1, max: 100 });
+    if (![1, 2, 4].includes(out.sam_hand_stride)) throw appError("server.param_sam_hand_stride", { field: m("field.sam_hand_stride") });
     return out;
   };
 
@@ -198,7 +203,7 @@ export function initParams(defaults, manualBatchDefault) {
     preferredCamera = cameraMode.value;
     rememberSettings();
   });
-  for (const input of [footLockPreset, hamerStride]) input.addEventListener("change", rememberSettings);
+  for (const input of [footLockPreset, hamerStride, samHandStride]) input.addEventListener("change", rememberSettings);
   for (const id of ["optManual", "optPostprocess", "optHamer", "optSamAuto"]) $(id).addEventListener("click", rememberSettings);
 
   const suggestCorrectionHeight = (report) => {

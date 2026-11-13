@@ -1036,11 +1036,15 @@ class V2MInferenceEngine:
                       progress_callback: Callable[[StageName, int, str], None] = None,
                       cancel_check: Callable[[], None] = None,
                       sam_chunk_size: int | None = 16,
+                      sam_hand_stride: int = 1,
                       details_callback: Callable[[dict], None] = None) -> str:
         """Video -> SMPL-H motion.
 
         static_camera: skip VGGT and use a fixed pose with default intrinsics.
         sam_chunk_size: frames per SAM body pass; both hands are batched together.
+        sam_hand_stride: decode both SAM hand decoders on one seeded frame per
+        ``sam_hand_stride``-wide interval and linearly interpolate the remaining
+        hand slots; 1 decodes every frame.
         hamer: refine the selected person's fingers before exporting the motion.
         hamer_stride: interval in video frames between hand predictions; fill gaps with rotation interpolation.
 
@@ -1052,6 +1056,9 @@ class V2MInferenceEngine:
         """
         if sam_chunk_size is not None and (type(sam_chunk_size) is not int or sam_chunk_size < 1):
             raise ValueError("sam_chunk_size must be a positive integer or automatic")
+        from flowhmr.utils.runtime_sam_features import SAM_HAND_STRIDES
+        if type(sam_hand_stride) is not int or sam_hand_stride not in SAM_HAND_STRIDES:
+            raise ValueError("sam_hand_stride must be 1, 2 or 4")
         from flowhmr.utils.runtime_hamer import hamer_available, load_hand_boxes, refine_fingers, MISSING_HAMER
         from flowhmr.utils.runtime_video_processing import VideoProcessor
 
@@ -1222,6 +1229,19 @@ class V2MInferenceEngine:
                 del cached_tokens
             except Exception as exc:
                 print(f"  [sam] cached features could not be loaded ({exc}), recomputing")
+        if feature_cached:
+            cached_stride = 1
+            try:
+                with open(batch_path, encoding="utf-8") as f:
+                    cached_batch = json.load(f)
+                if isinstance(cached_batch, dict):
+                    cached_stride = int(cached_batch.get("sam_hand_stride", 1))
+            except (OSError, ValueError):
+                pass
+            if cached_stride != sam_hand_stride:
+                print(f"  [sam] cached features use hand stride {cached_stride}, "
+                      f"recomputing for stride {sam_hand_stride}")
+                feature_cached = False
         need_hand_boxes = hamer and load_hand_boxes(hand_boxes_path, t_track) is None
         if feature_cached:
             batch = {"requested": sam_chunk_size, "actual": min(t_track, sam_chunk_size) if sam_chunk_size else None}
@@ -1291,6 +1311,7 @@ class V2MInferenceEngine:
                 with torch.cuda.device(sam_device):
                     torch.cuda.empty_cache()
             batch = plan_sam_batch(sam_device, t_track, sam_chunk_size)
+            batch["sam_hand_stride"] = sam_hand_stride
             if not feature_cached:
                 _details(sam_batch=batch.copy())
             print(f"  [sam] {'auto' if sam_chunk_size is None else 'manual'} batch={batch['actual']}, "
@@ -1311,6 +1332,11 @@ class V2MInferenceEngine:
                 frame_batch_size=batch["actual"],
                 on_oom_reduce=_reduce_batch if sam_chunk_size is None else None,
             )
+            if hasattr(self.sam_extractor, "hand_stride"):
+                sam_args["sam_hand_stride"] = sam_hand_stride
+            elif sam_hand_stride != 1:
+                print("  [sam] WARNING: this SAM backend cannot sample hands sparsely; "
+                      "decoding every frame")
             if feature_cached:
                 hand_boxes = extract_hand_boxes(working_video, **sam_args)
             else:

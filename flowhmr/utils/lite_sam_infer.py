@@ -26,7 +26,8 @@ def _combine_batches(batches, device):
 
 @torch.no_grad()
 def extract_tokens(estimator, images, boxes, cameras, *, gpu_preprocess=False,
-                   merge_hands=False, hand_boxes_out=None, hand_boxes_only=False):
+                   merge_hands=False, hand_boxes_out=None, hand_boxes_only=False,
+                   hand_indices=None):
     """Return CPU float32 ``(frames, 3072)`` tokens in body/left/right order.
 
     ``images`` contains RGB uint8 frames, one selected person per frame.
@@ -34,6 +35,11 @@ def extract_tokens(estimator, images, boxes, cameras, *, gpu_preprocess=False,
     operations leading to the tokens. Batching/GPU crops are optional and may
     introduce floating-point differences. Full SAM outputs use the estimator's
     original ``process_one_image`` entry point instead.
+
+    ``hand_indices`` runs the two hand decoders only on the listed frames. The
+    hand slots of every other row are left as NaN so the caller can linearly
+    interpolate them between neighbours (sparse hand conditioning); the body
+    decoder always runs on the whole batch.
     """
     if not images or len(images) != len(boxes) or len(images) != len(cameras):
         raise ValueError("Expected equally sized, nonempty images, boxes and cameras")
@@ -46,6 +52,16 @@ def extract_tokens(estimator, images, boxes, cameras, *, gpu_preprocess=False,
     for image in images:
         if not isinstance(image, np.ndarray) or image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
             raise ValueError("Expected RGB uint8 HWC images")
+    frame_count = len(images)
+    if hand_indices is None:
+        hand_indices = np.arange(frame_count, dtype=np.int64)
+    hand_indices = np.asarray(hand_indices, dtype=np.int64).reshape(-1)
+    if hand_indices.size:
+        if hand_indices.min() < 0 or hand_indices.max() >= frame_count:
+            raise ValueError("hand_indices must stay inside the batch")
+        if hand_indices.size > 1 and not np.all(np.diff(hand_indices) > 0):
+            raise ValueError("hand_indices must be strictly increasing")
+    sparse_hands = hand_indices.size < frame_count
 
     from sam_3d_body.data.utils.prepare_batch import prepare_batch
 
@@ -53,7 +69,7 @@ def extract_tokens(estimator, images, boxes, cameras, *, gpu_preprocess=False,
     model = estimator.model
     body_tokens, hand_tokens = [], []
     original_single = (len(images) == 1 and not gpu_preprocess and not merge_hands
-                       and hand_boxes_out is None and not hand_boxes_only)
+                       and hand_boxes_out is None and not hand_boxes_only and not sparse_hands)
 
     def capture_body(_module, _args, output):
         body_tokens.append(output[0].detach() if original_single else output[0][:, 0].detach().clone())
@@ -64,12 +80,25 @@ def extract_tokens(estimator, images, boxes, cameras, *, gpu_preprocess=False,
             raise _HandTokensReady
 
     def collected_tokens():
-        if len(body_tokens) != 1 or len(hand_tokens) != 2:
-            raise RuntimeError("SAM did not produce body, left hand and right hand tokens")
-        pieces = [body_tokens[0], *hand_tokens]
-        if original_single:
-            pieces = [piece[:, 0] for piece in pieces]
-        tokens = torch.cat(pieces, dim=-1)
+        if len(body_tokens) != 1:
+            raise RuntimeError("SAM did not produce a body token")
+        body = body_tokens[0]
+        if sparse_hands:
+            hands = torch.full((frame_count, 2048), float("nan"),
+                               dtype=body.dtype, device=body.device)
+            if hand_indices.size:
+                if len(hand_tokens) != 2:
+                    raise RuntimeError("SAM did not produce left and right hand tokens")
+                sampled = torch.as_tensor(hand_indices, device=body.device)
+                hands[sampled] = torch.cat(hand_tokens, dim=-1)
+            tokens = torch.cat((body, hands), dim=-1)
+        else:
+            if len(hand_tokens) != 2:
+                raise RuntimeError("SAM did not produce left and right hand tokens")
+            pieces = [body, *hand_tokens]
+            if original_single:
+                pieces = [piece[:, 0] for piece in pieces]
+            tokens = torch.cat(pieces, dim=-1)
         if tokens.shape != (len(images), 3072):
             raise RuntimeError(f"Unexpected SAM token shape: {tuple(tokens.shape)}")
         return tokens.to(device="cpu", dtype=torch.float32)
@@ -137,12 +166,16 @@ def extract_tokens(estimator, images, boxes, cameras, *, gpu_preprocess=False,
                 else:
                     raise RuntimeError("SAM hand decoder did not produce conditioning tokens")
 
-            if merge_hands:
-                run_hands(range(len(images)), ("left", "right"))
-                hand_tokens = list(hand_tokens.pop().split(len(images), dim=0))
+            hand_frames = range(len(images)) if not sparse_hands else hand_indices.tolist()
+            hand_count = len(images) if not sparse_hands else int(hand_indices.size)
+            if not hand_frames:
+                pass  # no sampled frame in this batch: hand slots stay NaN
+            elif merge_hands:
+                run_hands(hand_frames, ("left", "right"))
+                hand_tokens = list(hand_tokens.pop().split(hand_count, dim=0))
             else:
-                run_hands(range(len(images)), ("left",))
-                run_hands(range(len(images)), ("right",))
+                run_hands(hand_frames, ("left",))
+                run_hands(hand_frames, ("right",))
 
             tokens = collected_tokens()
             if hand_boxes_out is not None:
