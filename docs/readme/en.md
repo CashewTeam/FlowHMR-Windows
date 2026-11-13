@@ -6,11 +6,24 @@
 
 **[Download the portable Windows edition](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [Release notes](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR paper](https://arxiv.org/abs/2610.03691)
 
-## What's new in v0.3.3
+## What's new in v0.3.4
 
-- **App updates.** If you have v0.3.2, restart the app to check for v0.3.3 in the background, or click **Check for updates**. After you download the update and it passes verification, the app installs it at the next launch. Your models, characters, runtimes, jobs, and settings are preserved.
-- **Adaptive SAM batches.** SAM measures real inference memory use and adjusts each batch to fit available VRAM and system memory. It retries smaller batches on allocation failure and reports the cause when a single frame cannot run. You can now sample SAM hands every 1, 2, or 4 frames, including when using HaMeR refinement.
-- **Local MCP service.** Start it from the desktop toolbar to let a compatible client create, inspect, or cancel jobs, control playback and character bones, and export motion. Fixed MCP exports for automatically selected single-person jobs and restored automatic progress updates on remote Web pages. [MCP guide](../mcp.md) · [Full release notes](../release-windows.md)
+Fixed `Expected a cuda device, but got: cpu` when aligning people after motion generation in low-VRAM mode. **This update mainly targets GPUs with 8 GB of VRAM or less. If you haven't encountered the issue, you can stay on v0.3.3.** After updating, choose **Align scene** on the existing job in History to retry without regenerating motion.
+
+[Release notes](../release-windows.md) · [v0.3.3: adaptive SAM batches and local MCP](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.3)
+
+## System requirements and supported GPUs
+
+| Component | Minimum | Recommended |
+| --- | --- | --- |
+| OS | 64-bit Windows 10 / 11 | 64-bit Windows 11 |
+| RAM | 16 GB | 32 GB or more |
+| VRAM | 6 GB | 8 GB or more |
+
+| GPU | Runtime |
+| --- | --- |
+| NVIDIA GeForce RTX 20 / 30 / 40 / 50 | Enable a compatible CUDA runtime in the app. For RTX 50, choose 12.8 or 12.9. |
+| AMD Radeon RX 9000 / 7000 | On Windows 11, set up the [ROCm runtime](../amd-rocm.md) that matches your GPU. |
 
 ## Windows desktop edition
 
@@ -36,15 +49,9 @@ To try the app yourself, use the repository's [sample footage](../../assets/exam
 ## Quick start
 
 1. On 64-bit Windows 10 or 11, extract the entire `FlowHMR-Windows.zip` archive, open the extracted `FlowHMR` folder and double-click `FlowHMR.exe`. The base package includes Python, the desktop interface and the FBX export component.
-2. Install a compatible GPU driver, then open **Runtime** (运行环境) in the upper-right corner to download and enable the matching runtime. For NVIDIA, choose CUDA; CUDA 12.8 is recommended for the RTX 50 series. If your AMD Radeon RX 9000 series GPU uses `gfx1201`, follow the experimental ROCm setup below.
+2. Install a compatible graphics driver, then set up CUDA or ROCm as shown above.
 3. Open **Models** and choose **Download all public models** (下载全部公开模型), or download them one by one. The app verifies the files before putting them in `models/`. SAM 3D Body and VGGT-Omega come from ModelScope. If you don't need finger refinement, you can skip HaMeR when downloading individually. Use the table below for the official models that require sign-in.
 4. Drop a video into the app, select people and a frame range, then start generation. Preview the finished motion and export FBX, VMD, VRMA, or NPZ from the menu.
-
-### AMD Radeon RX 9000 series (experimental support)
-
-AMD and NVIDIA users use the same `FlowHMR-Windows.zip` and `FlowHMR.exe`. On Windows 11 with a Radeon RX 9000 series GPU that uses `gfx1201`, open **Runtime** on first launch and download and enable **ROCm 7.14.0 · gfx1201**. The app remembers your choice and automatically selects a compatible AMD GPU. Model installation works the same way.
-
-Downloading and extracting the official AMD packages and loading their libraries have been verified. The full motion capture pipeline on an RX 9070 XT, including moving-camera estimation and HaMeR, still needs testing on that hardware. See the [AMD setup and validation guide](../../docs/amd-rocm.md).
 
 ### Which official model packages do I need?
 

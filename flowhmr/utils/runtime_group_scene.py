@@ -207,7 +207,7 @@ def _save_scene_motion(destination, tracks, people):
     tmp.replace(destination / "motion.npz")
 
 
-def build_group_scene(destination, members, inspection, extractor, device, *, check=lambda: None, notify=lambda _: None):
+def build_group_scene(destination, members, inspection, acquire_sam, device, *, check=lambda: None, notify=lambda _: None):
     """Create one scene manifest and one aligned motion file for completed jobs."""
     entries = [(job, Path(directory)) for job, directory in members]
     destination = Path(destination)
@@ -233,7 +233,9 @@ def build_group_scene(destination, members, inspection, extractor, device, *, ch
     first = min(t["range"][0] for t in tracks)
     last = max(t["range"][1] for t in tracks)
     K, rt, camera = _shared_camera(video, entries, destination, (first, last), device, check, notify)
-    _observe(video, tracks, K, first, extractor, check, notify)
+    check()
+    with acquire_sam() as extractor:
+        _observe(video, tracks, K, first, extractor, check, notify)
     for t in tracks:
         if not t["samples"]:
             raise ValueError(f"人物 {t['job']['selected_person'] + 1} 没有可用的站位观测。")

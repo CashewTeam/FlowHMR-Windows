@@ -6,11 +6,24 @@
 
 **[下载 Windows 便携版](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [查看发布说明](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR 论文](https://arxiv.org/abs/2610.03691)
 
-## v0.3.3 更新
+## v0.3.4 更新
 
-- **程序更新。** 已安装 v0.3.2 的用户，重新打开软件即可在后台检查 v0.3.3，也可点击右上角 **检查更新**。下载并校验后，下次启动会安装更新。模型、角色、运行环境、历史任务和设置会保留。
-- **SAM 自动批次。** 从实际推理测出显存用量，结合显存和系统内存余量逐批调整。内存不足时缩批重试，单帧仍无法运行时会提示原因。新增逐帧、每 2 帧和每 4 帧的 SAM 手部采样选项，使用 HaMeR 精修时可按需降低采样频率。
-- **本机 MCP 服务。** 可从桌面顶栏启动，让兼容客户端创建、查询和取消任务，控制预览和角色骨骼，并导出动作。修复自动选人的单人任务通过 MCP 导出时报错，以及远程 Web 页面无法自动刷新进度的问题。[MCP 使用说明](docs/mcp.md) · [完整更新说明](docs/release-windows.md)
+修复低显存模式下多人动作已生成、却在对齐站位时出现 `Expected a cuda device, but got: cpu` 的问题。**主要面向显存 8 GB 及以下的用户；未遇到问题的用户可以暂留 v0.3.3。** 更新后，已有任务可在历史里点 **对齐场景**，无需重跑动作。
+
+[本次发布说明](docs/release-windows.md) · [v0.3.3 更新：SAM 自动批次与本机 MCP](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.3)
+
+## 最低配置与支持设备
+
+| 项目 | 最低配置 | 推荐配置 |
+| --- | --- | --- |
+| 系统 | 64 位 Windows 10 / 11 | 64 位 Windows 11 |
+| 内存 | 16 GB | 32 GB 或以上 |
+| 显存 | 6 GB | 8 GB 或以上 |
+
+| 设备 | 支持方式 |
+| --- | --- |
+| NVIDIA GeForce RTX 20 / 30 / 40 / 50 系列 | 在软件内启用匹配的 CUDA 环境；RTX 50 系列选 12.8 或 12.9。 |
+| AMD Radeon RX 9000 / 7000 系列 | 在 Windows 11 上配置与显卡匹配的 [ROCm 运行环境](docs/amd-rocm.md)。 |
 
 ## Windows 桌面版
 
@@ -36,15 +49,9 @@
 ## 快速开始
 
 1. 在 64 位 Windows 10 / 11 上完整解压 `FlowHMR-Windows.zip`，进入解包后的 `FlowHMR` 文件夹，双击 `FlowHMR.exe`。基础包自带 Python、界面组件和 FBX 导出组件。
-2. 安装兼容的显卡驱动，再在右上角 **运行环境** 下载并启用对应版本。NVIDIA 用户选 CUDA，RTX 50 系列推荐 CUDA 12.8。AMD Radeon RX 9000 系列中使用 `gfx1201` 的型号，可按下方步骤试用 ROCm。
+2. 安装兼容的显卡驱动，再按上表配置 CUDA 或 ROCm 运行环境。
 3. 打开 **模型**，点 **下载全部公开模型**，也可以逐项下载。公开模型会校验后放到 `models/`；SAM 3D Body 和 VGGT-Omega 由魔搭提供。不需要手指精修时，可以跳过 HaMeR。需要登录的官方模型按下表取得。
 4. 把视频拖进软件，选择要处理的人物和帧范围，再开始生成。完成后可先预览，再从菜单导出 FBX、VMD、VRMA 或 NPZ。
-
-### AMD Radeon RX 9000 系列（实验支持）
-
-AMD 和 NVIDIA 使用同一个 `FlowHMR-Windows.zip` 和 `FlowHMR.exe`。在 Windows 11 上使用 Radeon RX 9000 系列的 `gfx1201` 型号时，首次打开软件后，在 **运行环境** 下载并启用 **ROCm 7.14.0 · gfx1201**。软件会记住这项选择，并自动选用兼容的 AMD 显卡。模型安装步骤相同。
-
-已验证 AMD 官方包的下载、解包和运行库加载。RX 9070 XT 上的完整动捕流程，包括运动相机和 HaMeR，仍待实机验证。见 [AMD 安装与验证说明](docs/amd-rocm.md)。
 
 ### 官方模型该下载哪个？
 

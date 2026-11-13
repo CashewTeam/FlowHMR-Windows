@@ -28,6 +28,7 @@ import time
 import traceback
 import uuid
 from collections import defaultdict
+from contextlib import closing, contextmanager
 from functools import wraps
 from importlib.util import find_spec
 from pathlib import Path
@@ -931,18 +932,20 @@ def _assemble_scene(batch, *, automatic):
         check()
         update_job(batch, scene_message=message)
 
-    own_extractor = None
+    @contextmanager
+    def load_scene_sam():
+        import torch
+        from flowhmr.utils.runtime_sam_features import build_sam3d_extractor
+
+        notify("正在加载站位估计模型…")
+        with closing(build_sam3d_extractor(torch.device(ARGS.device))) as extractor:
+            yield extractor
+
     try:
         from flowhmr.utils.runtime_group_scene import build_group_scene
 
-        if ENGINE is None:
-            from flowhmr.utils.runtime_sam_features import build_sam3d_extractor
-            import torch
-
-            notify("正在加载站位估计模型…")
-            own_extractor = build_sam3d_extractor(torch.device(ARGS.device))
-        extractor = ENGINE.sam_extractor if ENGINE is not None else own_extractor
-        scene = build_group_scene(Path(job_dir(batch)) / "scene", done, INSPECTION, extractor, ARGS.device,
+        acquire_sam = ENGINE.scene_sam if ENGINE is not None else load_scene_sam
+        scene = build_group_scene(Path(job_dir(batch)) / "scene", done, INSPECTION, acquire_sam, ARGS.device,
                                   check=check, notify=notify)
         update_job(batch, scene=scene, scene_state="ready", scene_error=None, scene_finished=time.time())
         print(f"  [scene] {batch}: {len(scene['people'])} aligned people, source frames {scene['track_start'] + 1}–{scene['track_end'] + 1}", flush=True)
@@ -951,9 +954,6 @@ def _assemble_scene(batch, *, automatic):
     except Exception as exc:
         update_job(batch, scene_state="failed", scene_error=f"多人场景对齐失败：{exc}", scene_error_detail=str(exc))
         traceback.print_exc()
-    finally:
-        if own_extractor is not None:
-            own_extractor.close()
 
 
 def run_job(job_id):

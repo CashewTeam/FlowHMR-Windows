@@ -6,11 +6,24 @@
 
 **[下載 Windows 可攜版](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [查看發行說明](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR 論文](https://arxiv.org/abs/2610.03691)
 
-## v0.3.3 更新
+## v0.3.4 更新
 
-- **程式更新。** 已安裝 v0.3.2 的使用者，重新開啟軟體即可在背景檢查 v0.3.3，也可點選右上角 **檢查更新**。下載並驗證後，下次啟動時會安裝。模型、角色、執行環境、歷史任務與設定都會保留。
-- **SAM 自動批次。** 依實際推論測得的用量，以及可用的顯示記憶體和系統記憶體，逐批調整大小。配置失敗會縮小批次重試，單幀也無法處理時會提示原因。新增逐幀、每 2 幀和每 4 幀的 SAM 手部取樣，可搭配 HaMeR 手指精修使用。
-- **本機 MCP 服務。** 可從桌面頂欄啟動，讓相容用戶端建立、查詢、取消任務，控制預覽和角色骨骼，並匯出動作。修正自動選人的單人任務透過 MCP 匯出時出錯，以及遠端 Web 頁面無法自動更新進度的問題。[MCP 使用說明](../mcp.md) · [完整發行說明](../release-windows.md)
+修正在低顯示記憶體模式下，多人動作已生成，卻在對齊站位時出現 `Expected a cuda device, but got: cpu` 的問題。**主要適用於顯示記憶體 8 GB 以下（含）的使用者；未遇到問題可暫留 v0.3.3。** 更新後，既有任務可在歷史記錄點選 **對齊場景**，無須重新生成動作。
+
+[本次發行說明](../release-windows.md) · [v0.3.3：SAM 自動批次與本機 MCP](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.3)
+
+## 最低配置與支援裝置
+
+| 項目 | 最低配置 | 建議配置 |
+| --- | --- | --- |
+| 系統 | 64 位元 Windows 10 / 11 | 64 位元 Windows 11 |
+| 記憶體 | 16 GB | 32 GB 以上 |
+| 顯示記憶體 | 6 GB | 8 GB 以上 |
+
+| 裝置 | 支援方式 |
+| --- | --- |
+| NVIDIA GeForce RTX 20 / 30 / 40 / 50 | 在軟體內啟用相容的 CUDA 環境；RTX 50 系列選 12.8 或 12.9。 |
+| AMD Radeon RX 9000 / 7000 | 在 Windows 11 上設定與顯示卡相符的 [ROCm 執行環境](../amd-rocm.md)。 |
 
 ## Windows 桌面版
 
@@ -36,15 +49,9 @@
 ## 快速開始
 
 1. 在 64 位元 Windows 10 或 11 完整解壓縮 `FlowHMR-Windows.zip`，進入解壓縮後的 `FlowHMR` 資料夾，按兩下 `FlowHMR.exe`。基礎套件內含 Python、介面元件和 FBX 匯出元件。
-2. 安裝相容的顯示卡驅動程式，再從右上角 **執行環境** 下載並啟用對應版本。NVIDIA 使用者請選 CUDA，RTX 50 系列建議使用 CUDA 12.8。AMD Radeon RX 9000 系列中採用 `gfx1201` 的型號，可依下方步驟試用 ROCm。
+2. 安裝相容的顯示卡驅動程式，再依上表設定 CUDA 或 ROCm 執行環境。
 3. 開啟 **模型**，選擇 **下載所有公開模型**（下载全部公开模型），或逐項下載。公開模型經驗證後會放入 `models/`，其中 SAM 3D Body 和 VGGT-Omega 由 ModelScope 提供。不需要手指精修時可以略過 HaMeR。需登入下載的官方模型請依下表取得。
 4. 將影片拖入軟體，選取要處理的人物和影格範圍，再開始生成。完成後先預覽，再從選單匯出 FBX、VMD、VRMA 或 NPZ。
-
-### AMD Radeon RX 9000 系列（實驗支援）
-
-AMD 和 NVIDIA 使用同一個 `FlowHMR-Windows.zip` 和 `FlowHMR.exe`。在 Windows 11 上使用 Radeon RX 9000 系列的 `gfx1201` 型號時，首次開啟軟體後，請在 **執行環境** 下載並啟用 **ROCm 7.14.0 · gfx1201**。軟體會記住這項選擇，並自動選用相容的 AMD 顯示卡。模型安裝步驟相同。
-
-已驗證 AMD 官方套件的下載、解壓縮及程式庫載入。RX 9070 XT 上的完整動作擷取流程，包括移動相機與 HaMeR，仍待實機驗證。請參閱 [AMD 安裝與驗證說明](../../docs/amd-rocm.md)。
 
 ### 該下載哪個官方模型？
 

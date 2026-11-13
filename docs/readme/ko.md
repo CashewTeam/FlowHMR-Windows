@@ -6,11 +6,24 @@
 
 **[Windows 포터블 버전 다운로드](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [릴리스 노트](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR 논문](https://arxiv.org/abs/2610.03691)
 
-## v0.3.3 변경 사항
+## v0.3.4 변경 사항
 
-- **앱 업데이트.** v0.3.2를 다시 실행하면 백그라운드에서 v0.3.3을 확인합니다. 오른쪽 위의 **업데이트 확인**으로도 확인할 수 있습니다. 다운로드와 검증을 마치면 다음 실행 시 설치됩니다. 모델, 캐릭터, 런타임, 작업 기록 및 설정은 유지됩니다.
-- **SAM 배치 자동 조정.** 실제 추론의 메모리 사용량을 측정하고, 사용 가능한 VRAM과 시스템 메모리에 맞춰 배치마다 크기를 조정합니다. 할당에 실패하면 더 작은 배치로 다시 시도하고 한 프레임도 처리할 수 없으면 원인을 표시합니다. SAM 손 샘플링 간격은 1, 2, 4프레임 중에서 선택할 수 있으며 HaMeR 손가락 보정과 함께 사용할 수 있습니다.
-- **로컬 MCP 서비스.** 데스크톱 도구 모음에서 시작할 수 있습니다. 호환 클라이언트에서 작업 생성, 조회, 취소, 미리보기와 캐릭터 본 조작, 모션 내보내기가 가능합니다. 자동으로 선택한 단일 인물 작업의 MCP 내보내기 오류와 원격 웹 화면의 진행률 자동 갱신을 수정했습니다. [MCP 안내](../mcp.md) · [전체 릴리스 노트](../release-windows.md)
+저용량 VRAM 모드에서 여러 사람의 모션을 생성한 뒤 위치를 정렬할 때 `Expected a cuda device, but got: cpu` 오류가 발생하던 문제를 수정했습니다. **주로 VRAM 8 GB 이하인 환경을 위한 업데이트입니다. 문제가 없다면 v0.3.3을 계속 사용해도 됩니다.** 업데이트 후에는 작업 기록에서 기존 작업의 **장면 정렬**을 눌러 모션을 다시 생성하지 않고 재시도할 수 있습니다.
+
+[릴리스 노트](../release-windows.md) · [v0.3.3: SAM 배치 자동 조정과 로컬 MCP](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.3)
+
+## 최소 사양 및 지원 GPU
+
+| 항목 | 최소 사양 | 권장 사양 |
+| --- | --- | --- |
+| 운영체제 | 64비트 Windows 10 / 11 | 64비트 Windows 11 |
+| 메모리 | 16 GB | 32 GB 이상 |
+| VRAM | 6 GB | 8 GB 이상 |
+
+| GPU | 런타임 |
+| --- | --- |
+| NVIDIA GeForce RTX 20 / 30 / 40 / 50 | 앱에서 호환되는 CUDA 런타임을 활성화합니다. RTX 50 시리즈는 12.8 또는 12.9를 선택하세요. |
+| AMD Radeon RX 9000 / 7000 | Windows 11에서 GPU에 맞는 [ROCm 런타임](../amd-rocm.md)을 설정합니다. |
 
 ## Windows 데스크톱 버전
 
@@ -36,15 +49,9 @@
 ## 빠른 시작
 
 1. 64비트 Windows 10 또는 11에서 `FlowHMR-Windows.zip` 전체를 압축 해제합니다. 압축을 푼 `FlowHMR` 폴더를 열고 `FlowHMR.exe`를 실행합니다. 기본 패키지에는 Python, 데스크톱 UI 및 FBX 내보내기 구성 요소가 포함됩니다.
-2. 호환되는 GPU 드라이버를 설치하고, 오른쪽 위의 **런타임**(运行环境)에서 GPU에 맞는 환경을 다운로드해 활성화합니다. NVIDIA는 CUDA를 선택하며, RTX 50 시리즈에는 CUDA 12.8을 권장합니다. AMD Radeon RX 9000 시리즈 중 `gfx1201` 모델은 아래 절차로 실험적 ROCm 환경을 사용할 수 있습니다.
+2. 호환되는 GPU 드라이버를 설치한 뒤 위 표에 따라 CUDA 또는 ROCm을 설정합니다.
 3. **모델**을 열어 **공개 모델 모두 다운로드**(下载全部公开模型)를 선택하거나 하나씩 다운로드합니다. 공개 모델은 검증 후 `models/`에 배치되며 SAM 3D Body와 VGGT-Omega는 ModelScope에서 받습니다. 손가락 보정이 필요 없다면 개별 다운로드에서 HaMeR를 건너뛸 수 있습니다. 로그인이 필요한 공식 모델은 아래 표를 참고하세요.
 4. 앱에 동영상을 끌어 놓고 인물과 프레임 범위를 선택해 생성을 시작합니다. 생성된 모션을 미리 본 뒤 메뉴에서 FBX, VMD, VRMA 또는 NPZ로 내보낼 수 있습니다.
-
-### AMD Radeon RX 9000 시리즈 (실험적 지원)
-
-AMD와 NVIDIA 모두 같은 `FlowHMR-Windows.zip`과 `FlowHMR.exe`를 사용합니다. Windows 11에서 Radeon RX 9000 시리즈의 `gfx1201` 모델을 사용하는 경우, 처음 실행한 뒤 **런타임**에서 **ROCm 7.14.0 · gfx1201**을 다운로드해 활성화하세요. 앱은 선택을 저장하고 호환되는 AMD GPU를 자동으로 선택합니다. 모델 설치 방법은 같습니다.
-
-AMD 공식 패키지 다운로드, 압축 해제 및 라이브러리 로딩을 확인했습니다. 카메라 움직임 추정과 HaMeR를 포함한 전체 모션 캡처는 아직 RX 9070 XT 실기기에서 검증되지 않았습니다. [AMD 설치 및 검증 안내](../../docs/amd-rocm.md)를 참고하세요.
 
 ### 어떤 공식 모델을 받아야 하나요?
 

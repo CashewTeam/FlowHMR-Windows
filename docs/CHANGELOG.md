@@ -2,6 +2,11 @@
 
 Notable changes to FlowHMR.
 
+## Windows v0.3.4
+
+- Fix multi-person scene alignment in low-VRAM mode by loading SAM on the GPU for scene sampling and returning it to the CPU afterward, including on cancellation.
+- Document minimum system requirements and distinguish built-in runtimes from community-tested devices.
+
 ## Windows v0.3.3
 
 - Adjust SAM batches using measured peak VRAM and available system memory. Retry smaller batches after allocation errors.

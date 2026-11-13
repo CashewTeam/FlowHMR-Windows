@@ -1,10 +1,10 @@
 # FlowHMR Windows 桌面版
 
-适用于 64 位 Windows 10 / 11。基础包带 Python 3.10 和界面依赖，可以直接打开软件。生成前需按显卡安装推理环境：NVIDIA 使用 CUDA，AMD Radeon RX 9000 系列中的 `gfx1201` 型号可在 Windows 11 上尝试 [ROCm 实验环境](amd-rocm.md)。
+适用于 64 位 Windows 10 / 11，见 [最低配置与支持设备](../README.md#最低配置与支持设备)。基础包带 Python 3.10 和界面依赖，可以直接打开软件。生成前需按显卡安装推理环境：NVIDIA 使用 CUDA，AMD Radeon RX 9000 / 7000 系列在 Windows 11 上配置 [ROCm](amd-rocm.md)。
 
 1. 下载 [发布说明](release-windows.md)中的 `FlowHMR-Windows.zip`，完整解压到一个有写入权限的目录。
 2. 在解包后的 `FlowHMR` 文件夹里双击 `FlowHMR.exe`。程序使用独立窗口，不需要用浏览器。缺少 WebView2 或 VC++ 运行库时，程序会运行包里的微软安装程序。
-3. 点击右上角 **运行环境**，下载并启用 CUDA 12.6、12.8 或 12.9。RTX 50 系列推荐 12.8。下载支持续传，安装会校验文件和 GPU 运算。版本分别存入 `runtime/environments`，启用时重启推理服务。
+3. NVIDIA 用户可在右上角 **运行环境** 下载并启用 CUDA 12.6、12.8 或 12.9，RTX 50 系列推荐 12.8。AMD 用户按 [ROCm 说明](amd-rocm.md)配置。软件内下载支持续传，安装会校验文件和 GPU 运算。版本分别存入 `runtime/environments`，启用时重启推理服务。
 4. 点击右上角 **模型** → **下载全部公开模型**，或逐行选择要下载的模型。登录 [MANO 官网下载页](https://mano.is.tue.mpg.de/download.php) 取得 **Models & Code**（`mano_v1_2.zip`，男／女体型及 MANO）或 **Extended SMPL+H model**（`smplh.tar.xz`，中性体型）。基础动捕有其中一种官方体型即可。点 **导入模型压缩包…** 直接选择下载的文件，程序会自动解压、识别并显示结果；也可选择已解压的文件夹。详见 [模型目录说明](../models/README.md)。开始生成时才会加载推理模型。
 
 Windows 便携包自带 FBX 导出组件。安装运行环境和模型后，可离线生成、预览和导出 FBX、VMD、VRMA 或 NPZ。程序设置、日志和任务历史留在解包目录。可双击 `check-install.cmd` 检查环境和模型。

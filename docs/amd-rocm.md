@@ -1,6 +1,6 @@
-# Windows AMD ROCm 实验支持
+# Windows AMD ROCm 运行环境
 
-AMD 和 NVIDIA 使用同一个 `FlowHMR-Windows.zip` 和 `FlowHMR.exe`。Windows 11 上，AMD Radeon RX 9000 系列中使用 `gfx1201` 架构的显卡可以试用此环境。首次运行时，请从 **运行环境** 下载并启用 **ROCm 7.14.0 · gfx1201**。启用后软件会记住这项选择。NVIDIA 用户使用 CUDA。两种运行环境各自安装；切换时模型、设置和任务历史仍保留。
+AMD 和 NVIDIA 使用同一个 `FlowHMR-Windows.zip` 和 `FlowHMR.exe`。在 Windows 11 上，Radeon RX 9000 / 7000 系列需要配置与实际显卡匹配的 ROCm 环境。RX 7000 系列已验证可运行，需要手动配置 ROCm 版 PyTorch。软件内可下载的 **ROCm 7.14.0 · gfx1201** 适用于 RX 9000 系列中采用该架构的型号，安装步骤如下。切换环境后，模型、设置和任务历史仍保留。
 
 1. 使用 64 位 **Windows 11**，更新 AMD 驱动。显卡和驱动要求见 [AMD ROCm 7.14.0 说明](https://rocm.docs.amd.com/en/docs-7.14.0/about/release-notes.html)。
 2. 打开 `FlowHMR.exe`，在 **运行环境** 下载 **ROCm 7.14.0 · gfx1201**。程序使用 [AMD 官方软件包](https://repo.amd.com/rocm/whl-multi-arch/)，下载约 1.47 GB，需额外磁盘空间供解包和续传。GPU 验证通过后，点 **启用**。

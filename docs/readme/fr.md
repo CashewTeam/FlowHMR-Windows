@@ -6,11 +6,24 @@
 
 **[Télécharger l’édition portable pour Windows](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [Notes de version](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [Article FlowHMR](https://arxiv.org/abs/2610.03691)
 
-## Nouveautés de la v0.3.3
+## Nouveautés de la v0.3.4
 
-- **Mises à jour.** Redémarrez la v0.3.2 pour vérifier en arrière-plan si la v0.3.3 est disponible, ou utilisez le bouton de vérification en haut à droite. Après téléchargement et vérification, la mise à jour s’installe au prochain démarrage. Vos modèles, personnages, environnements, tâches et réglages sont conservés.
-- **Lots SAM adaptatifs.** L’application mesure la mémoire utilisée pendant l’inférence et ajuste chaque lot en fonction de la mémoire vidéo et de la RAM disponibles. En cas d’échec d’allocation, elle réessaie avec un lot plus petit et indique la cause si une seule image ne peut pas être traitée. L’échantillonnage des mains par SAM se règle sur 1, 2 ou 4 images et peut être utilisé avec l’affinage HaMeR.
-- **Service MCP local.** Démarrez-le depuis la barre d’outils. Un client compatible peut créer, consulter ou annuler des tâches, contrôler la lecture et le squelette des personnages, et exporter les mouvements. Correction des exports MCP après sélection automatique d’une seule personne et de l’actualisation de la progression dans l’interface Web distante. [Guide MCP](../mcp.md) · [Notes de version complètes](../release-windows.md)
+Correction de l’erreur `Expected a cuda device, but got: cpu` lors de l’alignement de plusieurs personnes après la génération des mouvements en mode mémoire vidéo réduite. **Cette mise à jour s’adresse surtout aux cartes disposant de 8 Go de mémoire vidéo ou moins. Si vous ne rencontrez pas ce problème, vous pouvez rester en v0.3.3.** Après la mise à jour, choisissez **Aligner la scène** dans l’historique pour reprendre la tâche sans regénérer les mouvements.
+
+[Notes de version](../release-windows.md) · [v0.3.3 : lots SAM adaptatifs et service MCP local](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.3)
+
+## Configuration requise et GPU compatibles
+
+| Composant | Minimum | Recommandé |
+| --- | --- | --- |
+| Système | Windows 10 / 11, 64 bits | Windows 11, 64 bits |
+| RAM | 16 Go | 32 Go ou plus |
+| Mémoire vidéo | 6 Go | 8 Go ou plus |
+
+| GPU | Environnement |
+| --- | --- |
+| NVIDIA GeForce RTX 20 / 30 / 40 / 50 | Activez un environnement CUDA compatible dans l’application. Pour une RTX série 50, choisissez 12.8 ou 12.9. |
+| AMD Radeon RX 9000 / 7000 | Sous Windows 11, configurez l’[environnement ROCm](../amd-rocm.md) adapté à votre carte. |
 
 ## Édition de bureau pour Windows
 
@@ -36,15 +49,9 @@ Pour tester vous-même l’application, utilisez la [vidéo source d’exemple](
 ## Démarrage rapide
 
 1. Sous Windows 10 ou 11 en 64 bits, extrayez entièrement `FlowHMR-Windows.zip`, ouvrez le dossier `FlowHMR` extrait et lancez `FlowHMR.exe`. Le paquet de base comprend Python, l’interface de bureau et le composant d’export FBX.
-2. Installez un pilote compatible, puis ouvrez **Environnement** (运行环境) en haut à droite pour télécharger et activer l’environnement adapté à votre GPU. Pour NVIDIA, choisissez CUDA ; la version 12.8 est recommandée pour la série RTX 50. Si votre AMD Radeon RX série 9000 utilise `gfx1201`, suivez les instructions ci-dessous pour essayer ROCm.
+2. Installez un pilote graphique compatible, puis configurez CUDA ou ROCm comme indiqué ci-dessus.
 3. Dans **Modèles**, choisissez **Télécharger tous les modèles publics** (下载全部公开模型), ou téléchargez les modèles un par un. Les fichiers sont vérifiés avant d’être placés dans `models/`. SAM 3D Body et VGGT-Omega proviennent de ModelScope. Si l’affinage des doigts est inutile, vous pouvez omettre HaMeR lors du téléchargement individuel. Consultez le tableau ci-dessous pour les modèles officiels qui nécessitent une connexion.
 4. Déposez une vidéo dans l’application, sélectionnez les personnes et la plage d’images, puis lancez la génération. Vérifiez le résultat dans l’aperçu, puis exportez-le en FBX, VMD, VRMA ou NPZ depuis le menu.
-
-### AMD Radeon RX série 9000 : prise en charge expérimentale
-
-AMD et NVIDIA utilisent les mêmes fichiers `FlowHMR-Windows.zip` et `FlowHMR.exe`. Sous Windows 11 avec une Radeon RX série 9000 à architecture `gfx1201`, ouvrez **Environnement** au premier lancement, puis téléchargez et activez **ROCm 7.14.0 · gfx1201**. L’application mémorise ce choix et sélectionne automatiquement un GPU AMD compatible. L’installation des modèles se fait de la même façon.
-
-Le téléchargement et l’extraction des paquets officiels AMD ainsi que le chargement des bibliothèques ont été vérifiés. La capture de mouvement complète, y compris l’estimation du mouvement de la caméra et HaMeR, reste à valider sur une RX 9070 XT. Consultez le [guide d’installation et de validation AMD](../../docs/amd-rocm.md).
 
 ### Quels modèles officiels télécharger ?
 

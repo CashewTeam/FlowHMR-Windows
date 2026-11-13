@@ -1,13 +1,13 @@
-# FlowHMR Windows v0.3.3
+# FlowHMR Windows v0.3.4
 
-- **程序更新。** v0.3.2 用户重启后会在后台检查新版，也可点击右上角 **检查更新**。选择下载，校验通过后再重启即可安装。模型、角色库、CUDA／ROCm 环境、历史任务和设置会保留。
-- **SAM 自动批次。** 先用一帧实测，再按显存预算和系统内存余量动态增减批次。分配失败会缩批重试。系统资源连单帧都无法满足时，任务会提示缺的是显存还是系统内存。长视频的 SAM 特征分批写入，减少合并时的内存峰值。
-- **SAM 手部采样。** 支持逐帧、每 2 帧和每 4 帧。隔帧时通过插值补齐 SAM 手部特征，身体特征仍逐帧计算。建议搭配 HaMeR 手指精修使用。感谢 [@Scar1etCrystal](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/pull/2)。
-- **本机 MCP 服务。** 在桌面顶栏启动，支持可选的访问令牌和随程序启动。兼容客户端可导入视频、调整参数、操作任务、控制播放和角色骨骼，以及导出 FBX、VMD、VRMA 和 NPZ。感谢 [@CashewTeam](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/pull/5)。
-- **任务进度和导出。** 远程 Web 页面恢复自动进度刷新。修复通过 MCP 导出自动选人的单人任务时，Mixamo、MetaHuman 和 Maya AdvancedSkeleton FBX 被错误拒绝的问题。
+**本次是低显存多人对齐修复，主要面向显存 8 GB 及以下的用户。** 如果 v0.3.3 使用正常，可以暂不更新。更大显存的电脑在剩余显存不足时也可能触发分段加载；遇到同样的报错也建议更新。
 
-在 RTX 5090 D 上用短片实跑，验证了自动增批、SAM 缓存复用和桌面 MCP。回放显存和系统内存收紧的场景，验证了缩批、重试和单帧也无法运行时的提示。RX 7800 XT 仍待实卡验证，AMD Radeon RX 9000 系列的 ROCm 环境继续标为实验支持。
+- 修复多人动作已生成，但对齐站位时报 `Expected a cuda device, but got: cpu` 的问题。对齐时只在采样阶段把 SAM 加载到显卡，完成、取消或失败后归还显存。
+- 对齐失败的历史任务，更新后可点 **对齐场景** 继续，无需重新生成动作。
+- README 增加最低配置与支持设备表，AMD Radeon RX 9000 / 7000 系列使用 ROCm。
 
-首次安装请完整解压 `FlowHMR-Windows.zip`，双击 `FlowHMR/FlowHMR.exe`。已装 v0.3.2 时可直接使用应用内更新。
+已用分段加载模式验证 65 帧双人任务的自动对齐、手动重试、重启后重试和取消；另从视频完整生成并导出 24 帧双人动作，在 Blender 中成功读回两套动画。验证没有人为限制显卡的显存。
 
-[MCP 使用说明](mcp.md) · [Windows 安装说明](windows.md) · [AMD 实验环境](amd-rocm.md)
+已安装 v0.3.3 时，点右上角 **检查更新**，下载校验后重启安装。首次安装请完整解压 `FlowHMR-Windows.zip`，双击 `FlowHMR/FlowHMR.exe`。
+
+[最低配置与支持设备](../README.md#最低配置与支持设备) · [Windows 安装说明](windows.md) · [上一版 v0.3.3](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.3)

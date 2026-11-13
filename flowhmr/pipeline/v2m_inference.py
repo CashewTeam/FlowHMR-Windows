@@ -478,6 +478,15 @@ class V2MInferenceEngine:
             self._active_stage = stage
 
     @contextmanager
+    def scene_sam(self):
+        """Reuse the SAM model for scene sampling after per-person generation."""
+        try:
+            self._activate_stage(StageName.FEATURE_EXTRACT)
+            yield self.sam_extractor
+        finally:
+            self._activate_stage()
+
+    @contextmanager
     def _release_camera_cuda(self):
         """Give the camera worker room on small or already occupied GPUs."""
         if self.device.type != "cuda":
