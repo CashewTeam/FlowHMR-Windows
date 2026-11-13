@@ -1,21 +1,27 @@
 # FlowHMR Windows 桌面版
 
-适用于 64 位 Windows 10 / 11，见 [最低配置与支持设备](../README.md#最低配置与支持设备)。基础包带 Python 3.10 和界面依赖，可以直接打开软件。生成前需按显卡安装推理环境：NVIDIA 使用 CUDA，AMD Radeon RX 9000 / 7000 系列在 Windows 11 上配置 [ROCm](amd-rocm.md)。
+适用于 64 位 Windows 10 / 11，见 [最低配置与支持设备](../README.md#最低配置与支持设备)。基础包带 Python 3.10 和界面依赖，可以直接打开软件。生成前请选择并启用推理环境：NVIDIA 使用 CUDA，Windows 11 上的 AMD Radeon 使用 [ROCm](amd-rocm.md)，兼容的 Intel Arc 可试用 Intel XPU；Intel 和 AMD x64 处理器也可选实验性的纯 CPU 推理。
 
-1. 下载 [发布说明](release-windows.md)中的 `FlowHMR-Windows.zip`，完整解压到一个有写入权限的目录。
+1. 下载 [FlowHMR-Windows.zip](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)，完整解压到一个有写入权限的目录。
 2. 在解包后的 `FlowHMR` 文件夹里双击 `FlowHMR.exe`。程序使用独立窗口，不需要用浏览器。缺少 WebView2 或 VC++ 运行库时，程序会运行包里的微软安装程序。
-3. NVIDIA 用户可在右上角 **运行环境** 下载并启用 CUDA 12.6、12.8 或 12.9，RTX 50 系列推荐 12.8。AMD 用户按 [ROCm 说明](amd-rocm.md)配置。软件内下载支持续传，安装会校验文件和 GPU 运算。版本分别存入 `runtime/environments`，启用时重启推理服务。
+3. 右上角 **运行环境** 会按设备推荐：RTX 50 系列使用 CUDA 12.8；RTX 20／30／40 系列使用 CUDA 12.1。GTX 10 系列可用 CUDA 12.1 试跑短片，实际表现取决于显存和驱动。已装的 12.6／12.9 仍可保留。AMD 用户按 [ROCm 说明](amd-rocm.md)配置。软件内下载支持续传，安装会校验文件及实际算子。运行环境分别存入 `runtime/environments`，启用时重启推理服务。
 4. 点击右上角 **模型** → **下载全部公开模型**，或逐行选择要下载的模型。登录 [MANO 官网下载页](https://mano.is.tue.mpg.de/download.php) 取得 **Models & Code**（`mano_v1_2.zip`，男／女体型及 MANO）或 **Extended SMPL+H model**（`smplh.tar.xz`，中性体型）。基础动捕有其中一种官方体型即可。点 **导入模型压缩包…** 直接选择下载的文件，程序会自动解压、识别并显示结果；也可选择已解压的文件夹。详见 [模型目录说明](../models/README.md)。开始生成时才会加载推理模型。
 
 Windows 便携包自带 FBX 导出组件。安装运行环境和模型后，可离线生成、预览和导出 FBX、VMD、VRMA 或 NPZ。程序设置、日志和任务历史留在解包目录。可双击 `check-install.cmd` 检查环境和模型。
 
-便携版每次启动时在后台检查 GitHub，发现新版本会打开更新面板，显示版本号和发布说明。可以关闭面板继续工作，也可以从右上角语言下拉框旁的 **检查更新** 重新打开。下载由用户发起，校验完成后在下次启动时安装。更新源暂时无法访问时，仍可使用当前版本。模型、角色库、任务历史、设置和已安装的 CUDA／ROCm 环境继续使用原来的目录。
+CUDA 12.1 环境使用 PyTorch 2.5.1。由于这个版本的 [权重读取安全问题](https://github.com/pytorch/pytorch/security/advisories/GHSA-53q9-r3pm-6pq6)，桌面版会校验 FlowHMR、SAM、VGGT、YOLOX 和 HaMeR 等公开推理权重的官方 SHA-256。
+
+纯 CPU 推理在 **运行环境 → CPU** 安装（约 126 MB，模型另装）。固定机位与运动相机均能用 CPU 推理；没有原生 BF16 时 SAM 使用 FP32，耗时和内存占用会增加。HaMeR 手指精修目前需要 GPU，SAM 自带的手部估计仍会执行。建议先用短片试跑。
+
+Windows 11 上的 Intel Arc A／B 系列和部分 Core Ultra Arc 核显可在 **运行环境 → Intel XPU** 试用。按 [Intel 的 PyTorch 驱动要求](https://www.intel.com/content/www/us/en/developer/articles/tool/pytorch-prerequisites-for-intel-gpu/2-12.html) 更新显卡驱动，下载完成后会检查本机 Intel GPU 上的算子。Intel GPU 负责 SAM 的图像编码；检测、相机估计、SAM 姿态解码、动作生成和导出由 CPU 完成。HaMeR 暂不支持此环境。普通 UHD 和旧 Iris Xe 不在这档的设备范围内。
+
+便携版每次启动时在后台检查 GitHub，发现新版本会打开更新面板，显示版本号和发布说明。可以关闭面板继续工作，也可以从右上角语言下拉框旁的 **检查更新** 重新打开。下载由用户发起，校验完成后在下次启动时安装。更新源暂时无法访问时，仍可使用当前版本。模型、角色库、任务历史、设置和已安装的运行环境继续使用原来的目录。
 
 打开 **检查更新** 面板，点 **手动更新** 可以直接选择已下载的官方 Windows ZIP，程序在后台校验和准备安装。**历史版本** 会列出 GitHub 发布的版本和本机缓存的上一个程序版本。本机缓存可离线切换。较早发布的 ZIP 可从列表下载并单独解压运行。
 
-相机默认使用 **固定机位**。素材仅平移、推拉或缩放时通常可用此模式；镜头明显转向、俯仰或滚转时，选 **运动相机 · 自动**。软件会分阶段使用 GPU，优先保留正常的相机分辨率和采样；可用显存不足时才降低分辨率或调整自动采样。手动采样保留用户设置的帧间隔。
+相机默认使用 **固定机位**。素材仅平移、推拉或缩放时通常可用此模式；镜头明显转向、俯仰或滚转时，选 **运动相机 · 自动**。独显优先保留正常分辨率和采样，显存不足时降低开销。AMD 核显推荐固定机位；选运动相机时，相机估计交给 CPU，自动最多采样 16 帧，系统内存不足时会尝试降低分辨率及采样密度。手动采样保留指定间隔，核显下过密时会提示加大间隔或改用自动。
 
-软件按所选区间内的实际人物轨迹确定处理帧数。单条轨迹超过 5000 帧时，任务面板会标出实验性长动作。
+人物检测只扫描所选起止帧，按区间内的实际人物轨迹生成动作；视频预览和多人对齐仍使用原素材帧号。重跑时改了起止帧，会重新检测新范围。单条轨迹超过 5000 帧时，任务面板会标出实验性长动作。
 
 开启 **自动选择 SAM 批次** 后，软件先运行一帧，再根据实际峰值、显存预算和系统内存余量逐批调整。分配失败时会缩批并重试同一段素材。单帧也无法处理时，任务会提示需要释放哪种内存。可切换到手动批次指定帧数。SAM 手部采样可选逐帧、每 2 帧或每 4 帧。建议在开启 HaMeR 手指精修时使用隔帧采样。
 
@@ -36,6 +42,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\windows\build-exe.ps1
 ```
 
 接触修正的源码构建需要 MSVC C++ 工具链，预编译的便携版已包含扩展。HaMeR 的推理代码和模型可在界面内下载。可先运行 `check-install.cmd`，再双击根目录的 `FlowHMR.exe`。
+
+直接从源码运行纯 CPU 或低显存分阶段推理前，请用 `python tools/windows/adapt_sam.py` 让 SAM 依照推理设备加载；便携包在打包时已应用。若之后需要从这份源码打包，请从保持原始子模块内容的干净副本构建。
 
 ## 打包
 

@@ -6,6 +6,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Callable, List, Optional
 
 import cv2
@@ -14,7 +15,10 @@ import torch
 import yaml
 from torch import Tensor
 
-from flowhmr.utils.runtime_capabilities import LONG_MOTION_EXPERIMENTAL_THRESHOLD
+from flowhmr.runtime_rocm import uses_shared_memory
+from flowhmr.utils.runtime_capabilities import (
+    EmptyPersonRangeError, LONG_MOTION_EXPERIMENTAL_THRESHOLD, cached_detection_matches, requested_frame_range,
+)
 from flowhmr.utils.runtime_image_io import write_image
 
 
@@ -423,14 +427,18 @@ def pick_vis_frame_indices(total_frames: int, max_vis: int = 5) -> list:
 class V2MInferenceEngine:
 
     def __init__(self, pipeline, proc, sam_extractor, body_model,
-                 smpl_mesh, postprocess, device, staged_models=None, *, smpl_model_path=None, body_reference=None):
+                 smpl_mesh, postprocess, device, staged_models=None, *, smpl_model_path=None, body_reference=None,
+                 xpu_backbone_device=None):
         self.pipeline = pipeline
         self.proc = proc
         self.sam_extractor = sam_extractor
+        self.sam_backend = "hybrid" if getattr(sam_extractor, "cpu_backbone", False) else "gpu"
         self.body_model = body_model
         self.smpl_mesh = smpl_mesh
         self.postprocess = postprocess
         self.device = device
+        self.sam_cache_backend = ("xpu" if xpu_backbone_device is not None else
+                                  "cpu" if device.type == "cpu" else self.sam_backend)
         self.smpl_model_path = smpl_model_path
         self.body_reference = body_reference
         self._staged_models = staged_models or {}
@@ -470,12 +478,21 @@ class V2MInferenceEngine:
             try:
                 model.to(self.device)
             except Exception:
-                model.to("cpu")
-                torch.cuda.empty_cache()
+                self._active_stage = stage  # Allow the worker to retry cleanup even after a partial move.
+                try:
+                    self.release_stage()
+                except Exception:
+                    pass  # Do not mask the original transfer failure.
                 raise
             if owner is not None:
                 owner.device = self.device
             self._active_stage = stage
+
+    def release_stage(self):
+        """Park the active model between jobs or while waiting for person selection."""
+        self._activate_stage()
+        if self.sam_cache_backend == "xpu":
+            self.sam_extractor.release_accelerator()
 
     @contextmanager
     def scene_sam(self):
@@ -484,7 +501,7 @@ class V2MInferenceEngine:
             self._activate_stage(StageName.FEATURE_EXTRACT)
             yield self.sam_extractor
         finally:
-            self._activate_stage()
+            self.release_stage()
 
     @contextmanager
     def _release_camera_cuda(self):
@@ -583,8 +600,12 @@ class V2MInferenceEngine:
               validation_steps: int = None,
               postprocess: bool = False,
               sam_device_ids: list[int] | None = None,
-              sam_base_port: int = 29500, *, smpl_model_path=None, body_reference=None) -> "V2MInferenceEngine":
+              sam_base_port: int = 29500, *, smpl_model_path=None, body_reference=None,
+              sam_cpu_backbone=False) -> "V2MInferenceEngine":
         device_obj = torch.device(device)
+        xpu_backbone_device = device_obj if device_obj.type == "xpu" else None
+        if xpu_backbone_device is not None:
+            device_obj = torch.device("cpu")  # Dense SAM encoder uses XPU; MHR and FlowHMR stay on CPU.
 
         print("[V2MInferenceEngine] Loading models...")
         t0 = time.time()
@@ -596,16 +617,40 @@ class V2MInferenceEngine:
         from flowhmr.core.bodymodels.smpl_skeleton import SMPLSkeleton, SMPLMesh
         body_reference, smpl_model_path = cls._body_reference(smpl_model_path, body_reference)
 
-        stage_models = False
+        stage_models = shared_gpu = False
         if device_obj.type == "cuda":
             if device_obj.index is None:
                 device_obj = torch.device("cuda", torch.cuda.current_device())
             free, total = torch.cuda.mem_get_info(device_obj)
-            stage_models = total <= 9 * 1024 ** 3 or free < 7 * 1024 ** 3
+            shared_gpu = uses_shared_memory(torch, device_obj)
+            stage_models = shared_gpu or total <= 9 * 1024 ** 3 or free < 7 * 1024 ** 3
+        if sam_cpu_backbone and (not shared_gpu or sam_device_ids):
+            raise ValueError("Hybrid SAM requires a single Windows AMD integrated GPU")
+        if shared_gpu or device_obj.type == "cpu":
+            from flowhmr.model_files import YOLOX, resolve_model, sam3d_paths
+            from flowhmr.utils.sam_batch import MIB, require_inference_ram, require_shared_ram
+
+            # Body and hand heads each hold a copy of the MHR model. Allow
+            # for the largest temporary checkpoint and eager CPU workspaces.
+            sam = sam3d_paths()
+            weights = [resolve_model(YOLOX), *sam, sam[-1]]
+            if ckpt:
+                weights.append(Path(ckpt))
+            sizes = [path.stat().st_size for path in weights if path.is_file()]
+            if sizes:
+                peak_load = sum(sizes) + max(sizes)
+                if shared_gpu:
+                    require_shared_ram(peak_load + 512 * MIB)
+                else:
+                    from flowhmr.utils.sam_cpu_backbone import cpu_backbone_supported
+
+                    workspace = 4096 if cpu_backbone_supported() else 6144
+                    require_inference_ram(peak_load + workspace * MIB)
         resident = torch.device("cpu") if stage_models else device_obj
         staged = {}
         if stage_models:
-            print("  [cuda] Low VRAM: load inactive models on CPU, move each to CUDA for its stage", flush=True)
+            reason = "Shared GPU memory" if shared_gpu else "Low VRAM"
+            print(f"  [gpu] {reason}: load inactive models on CPU, move each to the GPU for its stage", flush=True)
 
         detector = build_human_detector(resident)
         proc = VideoProcessor(detector=detector)
@@ -627,10 +672,12 @@ class V2MInferenceEngine:
                 sam_dev = torch.device(f"cuda:{sam_device_ids[0]}")
             stage_sam = stage_models and sam_dev == device_obj
             sam_extractor = build_sam3d_extractor(sam_dev, load_device=resident if stage_sam else None,
-                                                  use_compile=False if stage_sam else None)
+                                                  use_compile=False if stage_sam else None,
+                                                  cpu_backbone=sam_cpu_backbone,
+                                                  xpu_backbone_device=xpu_backbone_device)
             if stage_sam:
                 staged[StageName.FEATURE_EXTRACT] = (sam_extractor.estimator.model, sam_extractor.estimator)
-            print(f"  SAM3D extractor loaded (single GPU: {sam_dev})")
+            print(f"  SAM3D extractor loaded ({sam_dev})")
 
         if isinstance(model_cfg_path, dict):
             model_cfg = model_cfg_path
@@ -672,6 +719,7 @@ class V2MInferenceEngine:
             staged_models=staged,
             smpl_model_path=smpl_model_path,
             body_reference=body_reference,
+            xpu_backbone_device=xpu_backbone_device,
         )
 
     # Stage 1: Preprocess
@@ -928,6 +976,7 @@ class V2MInferenceEngine:
             max_frames=max_frames,
             progress_cb=_sam_progress,
         )
+        self.release_stage()
         print(f"  [feature_extract] tokens shape: {tuple(sam_tokens.shape)}")
 
         np.savez(sam_npz_path, tokens=sam_tokens.cpu().numpy())
@@ -1090,36 +1139,52 @@ class V2MInferenceEngine:
         _details(source_frames=video_meta.total_frames or None)
         if video_meta.total_frames > 0 and start_frame >= video_meta.total_frames:
             raise ValueError(f"起始帧超出素材范围（共 {video_meta.total_frames} 帧）。")
-        last_requested = end_frame
-        if max_frames is not None and max_frames > 0:
-            last_requested = min(last_requested, max_frames - 1) if last_requested is not None else max_frames - 1
+        detection_range = requested_frame_range(start_frame, end_frame, max_frames)
+        last_requested = detection_range[1]
+        dependent_paths = tuple(os.path.join(sub_dir, f"{video_name}_{suffix}") for suffix in (
+            "vggt_camera.npz", "static_camera.npz", "sam3d_feat.pt", "sam3d_feat_static.pt",
+            "sam3d_feat.pt.batch.json", "sam3d_feat_static.pt.batch.json",
+            "sam3d_feat.pt.hands.npy", "sam3d_feat_static.pt.hands.npy",
+        ))
 
-        if os.path.exists(bbox_npz_path):
+        if cached_detection_matches(bbox_npz_path, detection_range):
             print(f"  [bbox] skip (exists): {bbox_npz_path}")
             _pcb(StageName.DETECTION, 100, "Bbox cached")
         else:
             _pcb(StageName.DETECTION, 20, "Transcoded, detecting")
+            last_progress = 20
+
+            def on_detected(done, total):
+                nonlocal last_progress
+                if not total:
+                    return
+                progress = min(59, 20 + (done * 39 + total - 1) // total)
+                if progress > last_progress:
+                    last_progress = progress
+                    _pcb(StageName.DETECTION, progress, f"Detecting people: {done}/{total} frames")
 
             self._activate_stage(StageName.DETECTION)
-            result = self.proc.detect_and_track(working_video)
+            try:
+                result = self.proc.detect_and_track(working_video, start_frame=start_frame, end_frame=last_requested,
+                                                    on_progress=on_detected, cancel_check=cancel_check)
+            finally:
+                self.release_stage()
             if result.total_frames != video_meta.total_frames:
                 _details(source_frames=result.total_frames)
             _pcb(StageName.DETECTION, 60, f"Found {len(result.tracks)} person(s)")
 
             if not result.tracks:
+                if detection_range != (0, None):
+                    raise EmptyPersonRangeError("处理区间里没有检测到人物，请调整时间轴的起止帧。")
                 track_idx = -1
                 print(f"  [bbox] WARN no_tracks -> full-image bbox x {result.total_frames} frames")
             else:
                 track_idx = VideoProcessor.select_best_track(result)
-                eligible = [i for i, t in enumerate(result.tracks)
-                            if t.frames.max() >= start_frame and (last_requested is None or t.frames.min() <= last_requested)]
-                if not eligible:
-                    raise ValueError("处理区间里没有检测到人物，请调整时间轴的起止帧。")
-                if track_idx not in eligible:
-                    track_idx = max(eligible, key=lambda i: (result.tracks[i].length, result.tracks[i].avg_area))
                 # Fragments shorter than this (ByteTrack id switches, passers-by) are not offered.
-                min_len = 15
-                offered = [i for i in eligible if result.tracks[i].length >= min_len or i == track_idx]
+                # Scale it for short trims so a second person can still be chosen.
+                scanned_start, scanned_end = result.scanned_range
+                min_len = min(15, (scanned_end - scanned_start) // 2 + 1)
+                offered = [i for i, t in enumerate(result.tracks) if t.length >= min_len or i == track_idx]
                 if person_selector is not None and len(offered) > 1:
                     candidates = []
                     for i in offered:
@@ -1128,8 +1193,8 @@ class V2MInferenceEngine:
                         candidates.append({
                             "index": len(candidates), "track_index": i, "track_id": int(t.track_id),
                             "start": int(t.frames.min()), "end": int(t.frames.max()),
-                            "preview_start": max(start_frame, int(t.frames.min())),
-                            "preview_end": min(last_requested, int(t.frames.max())) if last_requested is not None else int(t.frames.max()),
+                            "preview_start": int(t.frames.min()),
+                            "preview_end": int(t.frames.max()),
                             "num_frames": int(t.length), "avg_area": float(t.avg_area),
                             "frames": t.frames[order].astype(int).tolist(),
                             "boxes": np.round(t.bboxes[order].astype(np.float64), 1).tolist(),
@@ -1143,19 +1208,15 @@ class V2MInferenceEngine:
                 print(f"  [bbox] track {track.track_id}: length={track.length} "
                       f"frame_range=[{int(track.frames.min())},{int(track.frames.max())}] "
                       f"/ total={result.total_frames}")
-            bbox_np, start_end = VideoProcessor.track_bboxes(result, track_idx)
-
-            np.savez(bbox_npz_path, bbox=bbox_np, start_end=start_end)
-            print(f"  [bbox] saved -> {bbox_npz_path}  (shape={bbox_np.shape})")
+            for path in dependent_paths:
+                Path(path).unlink(missing_ok=True)
+            VideoProcessor.save_detected_track(bbox_npz_path, result, track_idx, detection_range)
+            print(f"  [bbox] saved -> {bbox_npz_path}")
             _pcb(StageName.DETECTION, 100, "Bbox done")
 
         _limit_track_frames(
             bbox_npz_path, max_frames, start_frame=start_frame, end_frame=end_frame,
-            dependent_paths=tuple(os.path.join(sub_dir, f"{video_name}_{suffix}") for suffix in (
-                "vggt_camera.npz", "static_camera.npz", "sam3d_feat.pt", "sam3d_feat_static.pt",
-                "sam3d_feat.pt.batch.json", "sam3d_feat_static.pt.batch.json",
-                "sam3d_feat.pt.hands.npy", "sam3d_feat_static.pt.hands.npy",
-            )),
+            dependent_paths=dependent_paths,
         )
 
         # ==== Step 2: Camera ====
@@ -1181,7 +1242,8 @@ class V2MInferenceEngine:
             camera_result = make_static_camera(
                 (video_meta.height, video_meta.width), frame_range=(s, e), output_npz=camera_npz_path,
             )
-        elif cancel_check is not None or self._staged_models:
+        elif cancel_check is not None or self._staged_models or (
+                self.device.type == "cuda" and uses_shared_memory(torch, self.device)):
             camera_result = extract_vggt_camera_isolated(
                 working_video, output_npz=camera_npz_path, frame_range=(s, e),
                 expected_len=t_track, device=self.device, frame_interval=vggt_frame_interval,
@@ -1241,10 +1303,13 @@ class V2MInferenceEngine:
                 print(f"  [sam] cached features use hand stride {cached_stride}, "
                       f"recomputing for stride {sam_hand_stride}")
                 feature_cached = False
+            if feature_cached and cached_batch.get("backend", "gpu") != self.sam_cache_backend:
+                print("  [sam] backend changed, recomputing features and hand boxes", flush=True)
+                feature_cached = False
         need_hand_boxes = hamer and load_hand_boxes(hand_boxes_path, t_track) is None
         if feature_cached:
             batch = {"requested": sam_chunk_size, "actual": min(t_track, sam_chunk_size) if sam_chunk_size else None,
-                     "sam_hand_stride": cached_stride}
+                     "sam_hand_stride": cached_stride, "backend": self.sam_cache_backend}
             if cached_batch.get("requested") == sam_chunk_size:
                 batch.update(cached_batch)
             _details(sam_batch={**batch, "reused": True})
@@ -1301,14 +1366,17 @@ class V2MInferenceEngine:
 
             self._activate_stage(StageName.FEATURE_EXTRACT)
             estimator = getattr(self.sam_extractor, "estimator", None)
-            sam_device = torch.device(getattr(estimator, "device", self.device))
+            sam_device = getattr(self.sam_extractor, "xpu_backbone_device", None) or torch.device(
+                getattr(estimator, "device", self.device))
             adaptive_batch = sam_chunk_size is None
             if adaptive_batch and sam_device.type == "cuda":
                 with torch.cuda.device(sam_device):
                     torch.cuda.empty_cache()
 
             batch = {"requested": sam_chunk_size, "actual": None, "reused": False, "retries": 0,
-                     "sam_hand_stride": sam_hand_stride}
+                     "sam_hand_stride": sam_hand_stride, "backend": self.sam_cache_backend}
+            if sam_device.type == "cuda" and uses_shared_memory(torch, sam_device):
+                batch["shared_memory"] = True
             sam_args = dict(
                 bbox_xyxy=bbox_full_t,
                 K_all=K_all,
@@ -1323,8 +1391,9 @@ class V2MInferenceEngine:
                     if changed:
                         if not feature_cached:
                             _details(sam_batch=batch.copy())
+                        gpu_label = "shared GPU memory free" if batch.get("shared_memory") else "VRAM free"
                         print(f"  [sam] adaptive batch={batch['actual'] or batch['initial']}, "
-                              f"VRAM free={batch.get('free_mib', '?')} MiB, "
+                              f"{gpu_label}={batch.get('free_mib', '?')} MiB, "
                               f"driver headroom={batch.get('driver_free_mib', '?')} MiB, "
                               f"RAM available={batch['ram_free_mib']} MiB", flush=True)
 
@@ -1337,9 +1406,14 @@ class V2MInferenceEngine:
             if not adaptive_batch or estimator is None:
                 batch["actual"] = batch["initial"] = min(t_track, sam_chunk_size or 16)
                 sam_args["frame_batch_size"] = batch["actual"]
-                if sam_device.type == "cuda":
-                    free, total = torch.cuda.mem_get_info(sam_device)
-                    batch.update(free_mib=free // 1024 ** 2, total_mib=total // 1024 ** 2)
+                if sam_device.type in ("cuda", "xpu"):
+                    try:
+                        free, total = getattr(torch, sam_device.type).mem_get_info(sam_device)
+                    except RuntimeError:
+                        if sam_device.type != "xpu":
+                            raise
+                    else:
+                        batch.update(free_mib=free // 1024 ** 2, total_mib=total // 1024 ** 2)
                 if not feature_cached:
                     _details(sam_batch=batch.copy())
                 print(f"  [sam] batch={batch['actual']}, requested={sam_chunk_size}", flush=True)
@@ -1371,6 +1445,8 @@ class V2MInferenceEngine:
             _pcb(StageName.FEATURE_EXTRACT, 100, "SAM done")
 
         # ==== Step 4: Generation ====
+        if self.sam_cache_backend == "xpu":
+            self.release_stage()
         print(f"\n  === Step 4: Generation ===")
         _pcb(StageName.GENERATION, 0, "Starting generation")
         self._activate_stage(StageName.GENERATION)
@@ -1403,6 +1479,7 @@ class V2MInferenceEngine:
                 step_callback=cancel_check,
             )
         del feature_dict
+        self.release_stage()
         _pcb(StageName.GENERATION, 50, "ODE sampling done, exporting")
 
         if smoothing_frames:
@@ -1437,7 +1514,6 @@ class V2MInferenceEngine:
             _pcb(StageName.GENERATION, 75, "正在修正脚底接触")
             final_output = self.postprocess.run(output, cancel_check=cancel_check)
         if hamer:
-            self._activate_stage()
             _pcb(StageName.GENERATION, 100, "动作生成完成")
             _pcb(StageName.HAMER, 0, "正在启动 HaMeR 手指精修")
 

@@ -31,6 +31,7 @@ class Parameters(BaseModel):
     vggt_interval: int = Field(default=0, ge=0, le=120, description='0: automatic sampling.')
     sam_chunk_size: int | None = Field(default=None, ge=1, description='null: adjust batches to available VRAM and system memory.')
     sam_hand_stride: Literal[1, 2, 4] = Field(default=1, description='SAM hand decoding interval in frames.')
+    sam_backend: Literal['gpu', 'hybrid'] = Field(default='gpu', description='Hybrid moves the SAM image encoder to a compatible CPU on Windows AMD iGPUs.')
     smoothing_frames: float = Field(default=0.12, ge=0, description='Gaussian smoothing sigma, in frames.')
     postprocess: bool = True
     correction_floor_m: float | None = Field(default=None, description='Ground height in metres; null: estimate.')

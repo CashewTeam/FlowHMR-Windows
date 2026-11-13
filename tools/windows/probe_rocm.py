@@ -33,24 +33,32 @@ def main():
         print(torch.__version__, torchvision.__version__, torch.version.hip, torch.cuda.is_available())
         return
 
-    rocm.configure_windows_hip(torch, attention=True)
-    index = rocm.gpu_ordinal(torch)
+    profile = rocm.PROFILES[sys.argv[2]]
+    index = rocm.gpu_ordinal(torch, profile.arch)
     device = torch.device("cuda", index)
     torch.cuda.set_device(device)
-    x = torch.ones((64, 64), device=device)
+    rocm.configure_windows_hip(torch, device=device, attention=True)
+    dtype = torch.bfloat16 if rocm.supports_bf16(torch, device) else torch.float16
+    x = torch.ones((64, 64), dtype=dtype, device=device)
     assert (x @ x)[0, 0].item() == 64
     image = torch.ones((2, 3, 32, 32), device=device)
     weight = torch.ones((8, 3, 3, 3), device=device)
     filtered = fn.conv2d(image, weight)
     assert filtered[0, 0, 0, 0].item() == 27
     assert torch.isfinite(fn.batch_norm(filtered, None, None, training=True)).all()
-    q = torch.ones((1, 4, 32, 64), dtype=torch.bfloat16, device=device)
+    q = torch.ones((1, 4, 32, 64), dtype=dtype, device=device)
     assert fn.scaled_dot_product_attention(q, q, q).float().mean().item() == 1.0
     boxes = torch.tensor([[0., 0., 10., 10.], [1., 1., 9., 9.]], device=device)
     scores = torch.tensor([0.9, 0.8], device=device)
     assert torchvision.ops.nms(boxes, scores, 0.5).tolist() == [0]
-    torch.cuda.synchronize()
-    print(torch.cuda.get_device_name(index), torch.__version__)
+    if profile.arch in rocm.RDNA1_ARCHES:
+        indices = torch.tensor([[0, 1], [0, 1]], device=device)
+        values = torch.tensor([2., 3.], device=device)
+        dense = torch.sparse_coo_tensor(indices, values, (2, 2)).to_dense()
+        assert (dense @ torch.ones(2, device=device)).tolist() == [2., 3.]
+    torch.cuda.synchronize(device)
+    print(torch.cuda.get_device_name(index), rocm.gpu_arch(torch.cuda.get_device_properties(device)),
+          torch.__version__, dtype)
 
 
 if __name__ == "__main__":

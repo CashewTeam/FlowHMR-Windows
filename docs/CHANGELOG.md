@@ -2,6 +2,13 @@
 
 Notable changes to FlowHMR.
 
+## Windows v0.3.5
+
+- Add experimental CPU-only inference and Intel XPU image encoding. Recommend CUDA 12.8 for RTX 50 and CUDA 12.1 for RTX 20, 30, and 40, and expand ROCm runtime selection to more Radeon devices.
+- Reduce SAM memory overhead and offer CPU image encoding with GPU pose decoding on supported AMD integrated systems. Run moving-camera estimation on the CPU in AMD integrated GPU mode.
+- Run person detection within the selected frame range while preserving source timestamps and frame numbers for preview and scene alignment.
+- Bypass the system proxy for local desktop character requests and report session, file, and connection errors separately.
+
 ## Windows v0.3.4
 
 - Fix multi-person scene alignment in low-VRAM mode by loading SAM on the GPU for scene sampling and returning it to the CPU afterward, including on cancellation.

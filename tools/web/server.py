@@ -4,7 +4,7 @@ Launch (from the repo root):
     python app.py --ckpt models/flowhmr_latest/flowhmr_latest.ckpt --port 8080
 then open http://<host>:8080
 
-Pipeline per job (runs on one GPU, jobs are queued):
+Pipeline per job (jobs are queued):
     transcode 30fps -> YOLOX detection + tracking -> VGGT-Omega camera
     -> SAM-3D-Body tokens -> FlowHMR flow-matching generation
 """
@@ -43,14 +43,17 @@ WEB_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(WEB_DIR))
 sys.path.insert(0, REPO_ROOT)
 
-from flowhmr.utils.runtime_capabilities import SAMMemoryError, SOLE_FIT_REFERENCE_STRENGTH, native_correction_available
-from flowhmr.utils.runtime_hamer import hamer_available, HAMER_STRIDES, MISSING_HAMER
+from flowhmr.utils.runtime_capabilities import (
+    EmptyPersonRangeError, InferenceRAMError, SAMMemoryError, SharedCameraSamplingError, SharedGPUMemoryError,
+    SOLE_FIT_REFERENCE_STRENGTH, cached_detection_matches, native_correction_available, requested_frame_range,
+)
+from flowhmr.utils.runtime_hamer import hamer_available, HAMER_ISSUES, HAMER_STRIDES, MISSING_HAMER
 from flowhmr.utils.runtime_preview_inspection import PreviewInspection
 from flowhmr.utils.runtime_preview_thumbnail import ensure_thumbnail
 from flowhmr.core.bodymodels.body_variants import available_variants, model_path, write_preview_vertices
 from flowhmr.model_files import (
-    MODEL_ROOT, SMPLH_FILES, core_model_paths, ensure_model_folders, flowhmr_paths, missing_model_paths,
-    smplh_reference,
+    HAMER_FILES, MODEL_ROOT, SAM3D_FILES, VGGT, SMPLH_FILES, core_model_paths, ensure_model_folders,
+    flowhmr_paths, missing_model_paths, resolve_model, smplh_reference,
 )
 from flowhmr import model_integrity
 from flowhmr.character_files import CharacterFiles, KEY_ENV as CHARACTER_KEY_ENV
@@ -59,8 +62,8 @@ from flowhmr.model_sources import PUBLIC_ASSETS
 from flowhmr.model_import import ModelImporter, ModelImportError
 from flowhmr.model_inventory import model_inventory
 from flowhmr.model_downloads import ACTIVE_DOWNLOAD, DownloadError, ModelDownloads, missing_downloads
-from flowhmr.runtime_environments import RUNTIME
-from flowhmr import runtime_rocm
+from flowhmr.runtime_environments import RUNTIME, cuda_ordinal
+from flowhmr import runtime_rocm, runtime_xpu
 from flowhmr.mcp.service import MCPService
 from flowhmr.mcp.contract import (Parameters as MCPParameters, ExportOptions as MCPExportOptions,
                                   SERVICE_KEY_HEADER, TOOL_NAMES, parameter_defaults, single_result_person_id)
@@ -283,31 +286,81 @@ def checked_model_paths(args, body_reference=None):
         listing = "\n".join(missing)
         raise UserMessage("推理模型或配置未就绪。请在右上角「模型」查看：\n" + listing,
                           "model_files_not_ready", files=listing)
+    if RUNTIME.cuda_variant() == "cu121":
+        _check_cu121_weights(paths)
     return paths
 
 
-def load_engine(args, body_reference, paths):
-    """Validate and load the models from the job worker, never from startup or HTTP."""
-    ckpt, model_cfg = paths[:2]
+def _check_cu121_weights(paths):
+    # Official cu121 uses PyTorch 2.5.1, whose weights_only loader cannot
+    # safely open unknown files (CVE-2025-32434).
+    unverified = []
+    for path in paths:
+        if path.suffix.lower() not in (".pt", ".pth", ".ckpt"):
+            continue
+        asset = model_integrity.pinned_asset(model_integrity.relative_name(path))
+        try:
+            valid = asset is not None and asset.sha256 is not None and model_integrity.digest(path) == asset.sha256
+        except OSError:
+            valid = False
+        if not valid:
+            unverified.append(asset.relative if asset else path.name)
+    if unverified:
+        listing = "\n".join(unverified)
+        raise UserMessage("CUDA 12.1 只能使用已通过校验的官方权重。请在「模型」重新安装对应文件：\n" + listing,
+                          "runtime_cu121_model_unverified", files=listing)
 
+
+def resolve_inference_device(requested):
     import torch
 
-    device = torch.device(args.device)
+    device = torch.device(requested)
+    if device.type == "xpu":
+        try:
+            index = runtime_xpu.xpu_ordinal(torch, ordinal=device.index)
+            torch.xpu.set_device(index)
+        except (AttributeError, RuntimeError) as error:
+            raise UserMessage("Intel XPU 需要 Windows 11 和受支持的 Intel Arc 显卡。请检查驱动。",
+                              "runtime_xpu_no_device") from error
+        return torch.device("xpu", index)
     if device.type == "cuda":
-        runtime_rocm.configure_windows_hip(torch, attention=True)
-        if sys.platform == "win32" and torch.version.hip and device.index is None:
-            architecture = runtime_rocm.ARCH if RUNTIME.active == runtime_rocm.PROFILE else None
+        if sys.platform == "win32" and torch.version.hip:
+            profile = runtime_rocm.PROFILES.get(RUNTIME.active)
             try:
-                args.device = f"cuda:{runtime_rocm.gpu_ordinal(torch, architecture)}"
+                index = runtime_rocm.gpu_ordinal(torch, profile.arch if profile else None, ordinal=device.index)
             except RuntimeError as error:
-                raise UserMessage("没有可用于当前 ROCm 环境的显卡。请检查驱动和显卡设置。", "runtime_rocm_gpu_required") from error
-            device = torch.device(args.device)
+                if profile:
+                    raise UserMessage(f"当前 ROCm 环境需要可用的 {profile.arch} 显卡。",
+                                      "runtime_rocm_gpu_required", arch=profile.arch) from error
+                raise UserMessage("没有可用于当前 ROCm 环境的显卡。请检查驱动和显卡设置。",
+                                  "runtime_rocm_no_device") from error
+            device = torch.device("cuda", index)
+        elif variant := RUNTIME.cuda_variant():
+            try:
+                device = torch.device("cuda", cuda_ordinal(torch, variant, device.index))
+            except RuntimeError as error:
+                raise UserMessage("此版本不适用于可用的 NVIDIA 显卡。", "runtime_cuda_arch_mismatch") from error
         torch.cuda.set_device(device.index if device.index is not None else 0)
+        runtime_rocm.configure_windows_hip(torch, device=device, attention=True)
+    return device
+
+
+def load_engine(args, body_reference, paths, *, sam_backend="gpu"):
+    """Validate and load the models from the job worker, never from startup or HTTP."""
+    ckpt, model_cfg = paths[:2]
+    device = resolve_inference_device(args.device)
+    if sam_backend == "hybrid":
+        import torch
+        from flowhmr.utils.sam_cpu_backbone import cpu_backbone_supported
+
+        if device.type != "cuda" or not runtime_rocm.uses_shared_memory(torch, device) or not cpu_backbone_supported():
+            raise UserMessage("混合 SAM 需要 Windows AMD 核显和支持 AVX-512 BF16 的 CPU。", "sam_hybrid_unavailable")
     from flowhmr.pipeline.v2m_inference import V2MInferenceEngine
 
     return V2MInferenceEngine.build(
-        ckpt=str(ckpt), model_cfg_path=str(model_cfg), device=args.device,
+        ckpt=str(ckpt), model_cfg_path=str(model_cfg), device=str(device),
         smpl_model_path=str(paths[-2]), body_reference=body_reference,
+        sam_cpu_backbone=sam_backend == "hybrid",
     )
 
 
@@ -321,7 +374,7 @@ def missing_body_reference(reference):
                        "body_reference_missing", body=reference)
 
 
-def get_engine(job_id, requested_reference=None):
+def get_engine(job_id, requested_reference=None, *, sam_backend="gpu"):
     global ENGINE, _POSTPROCESS
     from flowhmr.core.bodymodels.smplh_data import validated_smplh_reference
 
@@ -334,7 +387,7 @@ def get_engine(job_id, requested_reference=None):
         raise UserMessage("尚未安装可用的 SMPL-H 体型。请导入官方 MANO v1.2 的男／女体型，或 Extended SMPL+H 的中性体型。",
                           "model_body_required") from error
     paths = checked_model_paths(ARGS, reference)
-    if ENGINE is None or ENGINE.body_reference != reference:
+    if ENGINE is None or ENGINE.body_reference != reference or ENGINE.sam_backend != sam_backend:
         old = ENGINE
         ENGINE = _POSTPROCESS = None
         if old is not None:
@@ -345,7 +398,7 @@ def get_engine(job_id, requested_reference=None):
             cuda = getattr(sys.modules.get("torch"), "cuda", None)
             if getattr(cuda, "is_initialized", lambda: False)():
                 cuda.empty_cache()
-        ENGINE = load_engine(ARGS, reference, paths)
+        ENGINE = load_engine(ARGS, reference, paths, sam_backend=sam_backend)
     with JOBS_LOCK:
         if job_id in CANCEL_REQUESTS:
             raise JobCancelled()
@@ -374,6 +427,7 @@ SAM_HAND_STRIDES = (1, 2, 4)
 DEFAULT_PARAMS = {
     "seed": 0, "cfg_scale": 1.0, "steps": 20, "max_frames": None, "vggt_interval": 0,
     "sam_chunk_size": None, "sam_hand_stride": 1, "start_frame": 0, "end_frame": None,
+    "sam_backend": "gpu",
     "postprocess": True, "manual_select": True, "auto_frames": True, "static_camera": True,
     "correction_floor_m": None, "correction_preset": "strong",
     "sole_fit": True, "sole_fit_strength": SOLE_FIT_REFERENCE_STRENGTH,
@@ -445,6 +499,12 @@ def parse_params(src, base=None):
     sam_hand_stride = integer("sam_hand_stride", 1)
     if sam_hand_stride not in SAM_HAND_STRIDES:
         raise UserMessage("SAM 手部采样间隔须为逐帧、每 2 帧或每 4 帧。", "param_sam_hand_stride")
+    sam_backend = src.get("sam_backend", base["sam_backend"])
+    if sam_backend not in ("gpu", "hybrid"):
+        raise UserMessage("请选择有效的 SAM 运行模式。", "param_sam_backend")
+    if sam_backend == "hybrid" and (str(ARGS.device).split(":", 1)[0] != "cuda"
+                                    or not runtime_rocm.sam_hybrid_candidate(RUNTIME.active)):
+        raise UserMessage("混合 SAM 需要 Windows AMD 核显和支持 AVX-512 BF16 的 CPU。", "sam_hybrid_unavailable")
     try:
         smoothing = float(src.get("smoothing_frames", base["smoothing_frames"]))
     except (TypeError, ValueError, OverflowError):
@@ -481,6 +541,7 @@ def parse_params(src, base=None):
         "vggt_interval": vggt_interval,
         "sam_chunk_size": integer("sam_chunk_size", 1, optional=True),
         "sam_hand_stride": sam_hand_stride,
+        "sam_backend": sam_backend,
         "postprocess": _to_bool(src.get("postprocess"), base["postprocess"]),
         "correction_floor_m": floor,
         "correction_preset": preset,
@@ -492,6 +553,11 @@ def parse_params(src, base=None):
 
 
 # --------------------------------------------------------------------------- jobs
+def job_detection_range(params):
+    legacy_limit = None if params.get("auto_frames", True) else params.get("max_frames")
+    return requested_frame_range(params.get("start_frame", 0), params.get("end_frame"), legacy_limit)
+
+
 def job_dir(job_id):
     return MEMBER_DIRS.get(job_id, os.path.join(ARGS.work_dir, job_id))
 
@@ -701,6 +767,7 @@ def enqueue(job):
 
 
 def worker_loop():
+    global ENGINE, _POSTPROCESS
     while True:
         job_id = JOB_QUEUE.get()
         if isinstance(job_id, tuple):
@@ -732,8 +799,16 @@ def worker_loop():
                 detail = f"{type(e).__name__}: {e}"
                 if isinstance(e, UserMessage):
                     code, params = e.code, e.params
+                elif isinstance(e, EmptyPersonRangeError):
+                    code, params = "detection_empty_range", {}
+                elif isinstance(e, SharedCameraSamplingError):
+                    code, params = "rocm_camera_sampling", {}
                 elif isinstance(e, SAMMemoryError):
                     code, params = f"sam_low_{e.resource}", {}
+                elif isinstance(e, SharedGPUMemoryError):
+                    code, params = "rocm_shared_ram_low", e.params
+                elif isinstance(e, InferenceRAMError):
+                    code, params = "inference_ram_low", e.params
                 else:
                     code, params = "job_failed", {"detail": detail}
                 job.update(status="cancelled" if cancelled else "failed",
@@ -748,6 +823,12 @@ def worker_loop():
                 CANCEL_REQUESTS.discard(job_id)
                 batch = JOBS.get(job_id, {}).get("person_batch")
             try:
+                if ENGINE is not None:
+                    try:
+                        ENGINE.release_stage()
+                    except Exception:
+                        app.logger.exception("Unable to park the active inference model; discarding the engine")
+                        ENGINE = _POSTPROCESS = None
                 cuda = getattr(sys.modules.get("torch"), "cuda", None)
                 if getattr(cuda, "is_initialized", lambda: False)():
                     cuda.empty_cache()
@@ -828,8 +909,8 @@ def _confirm_people(job_id, result, candidates, people, *, automatic):
             _link_video(os.path.join(directory, video), os.path.join(child_stage, video))
             _link_video(os.path.join(directory, canonical), os.path.join(child_stage, canonical))
             _copy_person_thumbnail(directory, child_stage, i)
-            bbox, start_end = VideoProcessor.track_bboxes(result, candidate["track_index"])
-            np.savez(os.path.join(sub_dir, f"{SUB}_bbox.npz"), bbox=bbox, start_end=start_end)
+            VideoProcessor.save_detected_track(os.path.join(sub_dir, f"{SUB}_bbox.npz"), result,
+                                                candidate["track_index"], job_detection_range(params))
             _write_job(child, child_stage)
             children.append((child, child_stage))
 
@@ -934,18 +1015,24 @@ def _assemble_scene(batch, *, automatic):
 
     @contextmanager
     def load_scene_sam():
-        import torch
         from flowhmr.utils.runtime_sam_features import build_sam3d_extractor
 
         notify("正在加载站位估计模型…")
-        with closing(build_sam3d_extractor(torch.device(ARGS.device))) as extractor:
+        with closing(build_sam3d_extractor(device, xpu_backbone_device=xpu_backbone)) as extractor:
             yield extractor
 
     try:
+        import torch
         from flowhmr.utils.runtime_group_scene import build_group_scene
 
+        if RUNTIME.cuda_variant() == "cu121":
+            _check_cu121_weights(tuple(map(resolve_model, (*SAM3D_FILES, VGGT))))
+        device = ENGINE.device if ENGINE is not None else resolve_inference_device(ARGS.device)
+        xpu_backbone = device if device.type == "xpu" else None
+        if xpu_backbone is not None:
+            device = torch.device("cpu")  # VGGT and scene geometry run on the host.
         acquire_sam = ENGINE.scene_sam if ENGINE is not None else load_scene_sam
-        scene = build_group_scene(Path(job_dir(batch)) / "scene", done, INSPECTION, acquire_sam, ARGS.device,
+        scene = build_group_scene(Path(job_dir(batch)) / "scene", done, INSPECTION, acquire_sam, device,
                                   check=check, notify=notify)
         update_job(batch, scene=scene, scene_state="ready", scene_error=None, scene_finished=time.time())
         print(f"  [scene] {batch}: {len(scene['people'])} aligned people, source frames {scene['track_start'] + 1}–{scene['track_end'] + 1}", flush=True)
@@ -961,15 +1048,22 @@ def run_job(job_id):
     with JOBS_LOCK:
         job = JOBS[job_id]
         params = job["params"]
+        sam_backend = params.get("sam_backend", "gpu")
         requested_reference = job.get("body_reference")
         if not isinstance(requested_reference, str) or requested_reference not in SMPLH_FILES:
             requested_reference = None
         if params["hamer"] and not hamer_available(ARGS.device):
+            if str(ARGS.device).split(":", 1)[0] in ("cpu", "xpu"):
+                raise UserMessage(HAMER_ISSUES["hamer_gpu_required"], "hamer_gpu_required")
             raise UserMessage(MISSING_HAMER, "hamer_not_ready")
-        loading_models = ENGINE is None or ENGINE.body_reference != (requested_reference or smplh_reference())
+        loading_models = (ENGINE is None or ENGINE.body_reference != (requested_reference or smplh_reference())
+                          or ENGINE.sam_backend != sam_backend)
         job.update(status="running", loading_models=loading_models, started=time.time(),
                    message="首次运行，正在加载推理模型…" if loading_models else "Starting")
         _persist_job_locked(job)
+
+    if params["hamer"] and RUNTIME.cuda_variant() == "cu121":
+        _check_cu121_weights(tuple(map(resolve_model, HAMER_FILES)))
 
     def on_progress(stage, progress, desc):
         idx = STAGE_INDEX.get(getattr(stage, "value", str(stage)))
@@ -1036,7 +1130,7 @@ def run_job(job_id):
         _confirm_people(job_id, result, candidates, chosen, automatic=people is None)
         return chosen[0]
 
-    engine = get_engine(job_id, requested_reference)
+    engine = get_engine(job_id, requested_reference, sam_backend=sam_backend)
     _raise_if_cancelled(job_id)
     engine.pipeline.validation_steps = params["steps"]
     engine.postprocess = None
@@ -1547,6 +1641,7 @@ def model_download_active():
 def api_info():
     config = getattr(ARGS, "model_cfg", None)
     inventory = model_inventory(ARGS.device, ARGS.ckpt, config)
+    rocm_profile = runtime_rocm.PROFILES.get(RUNTIME.active)
     if local_model_request():
         plan = missing_downloads(ARGS.device, ARGS.ckpt, config, include_hamer=True)
         inventory["download_sizes"] = {group: sum(asset.size for asset in assets) for group, assets in plan.items()}
@@ -1569,6 +1664,8 @@ def api_info():
         "body_variants": available_variants(),
         "body_reference": smplh_reference(),
         "sam_manual_default": getattr(ARGS, "sam_chunk_default", 16),
+        "camera_on_cpu_for_amd_igpu": bool(rocm_profile and rocm_profile.integrated),
+        "sam_hybrid_available": str(ARGS.device).split(":", 1)[0] == "cuda" and runtime_rocm.sam_hybrid_candidate(RUNTIME.active),
     })
 
 
@@ -1634,7 +1731,7 @@ def requires_runtime(view):
             state = RUNTIME.summary()
             if not state["ready"]:
                 message = ("请先重启运行环境，完成切换。" if state["pending_restart"] else
-                           "请在右上角「运行环境」下载并启用与显卡匹配的运行环境。")
+                           "请在右上角「运行环境」下载并启用推理环境。")
                 return jsonify(error=message, code="runtime_required",
                                error_code="runtime_restart_required" if state["pending_restart"] else "runtime_required"), 409
             return view(*args, **kwargs)
@@ -1771,26 +1868,25 @@ def api_rerun(job_id):
         skip = (f"{SUB}_seed",)  # generated motion is recomputed
         reselect = _to_bool(body.get("reselect_person"), False)
         camera_changed = params["static_camera"] != src["params"].get("static_camera", False)
-        def requested_range(settings):
-            end = settings.get("end_frame")
-            if not settings.get("auto_frames", True) and settings.get("max_frames") is not None:
-                limit = settings["max_frames"] - 1
-                end = min(end, limit) if end is not None else limit
-            return settings.get("start_frame", 0), end
-        range_changed = requested_range(src["params"]) != requested_range(params)
-        if reselect:
-            # per-person caches are invalidated so detection runs and the user picks again
-            skip += (f"{SUB}_bbox.npz",)
-        if reselect or camera_changed or range_changed:
+        scan_range = job_detection_range(params)
+        bbox_name = f"{SUB}_bbox.npz"
+        detection_changed = (reselect or job_detection_range(src["params"]) != scan_range or
+                             not cached_detection_matches(os.path.join(src_sub, bbox_name), scan_range))
+        if detection_changed:
+            skip += (bbox_name,)
+        if detection_changed or camera_changed:
             # SAM conditioning also depends on camera intrinsics, not just frame count.
             skip += (f"{SUB}_sam3d_feat.pt", f"{SUB}_vggt_camera.npz",
                      f"{SUB}_sam3d_feat_static.pt", f"{SUB}_static_camera.npz")
         elif not params["static_camera"] and params["vggt_interval"] != src["params"]["vggt_interval"]:
             skip += (f"{SUB}_sam3d_feat.pt", f"{SUB}_vggt_camera.npz")
-        if params["sam_chunk_size"] != src["params"].get("sam_chunk_size", DEFAULT_PARAMS["sam_chunk_size"]):
+        if any(params[key] != src["params"].get(key, DEFAULT_PARAMS[key])
+               for key in ("sam_chunk_size", "sam_hand_stride", "sam_backend")):
             skip += (f"{SUB}_sam3d_feat.pt", f"{SUB}_sam3d_feat_static.pt")
-        if params["sam_hand_stride"] != src["params"].get(
-                "sam_hand_stride", DEFAULT_PARAMS["sam_hand_stride"]):
+        previous_sam = (src.get("sam_batch") or {}).get("backend", "gpu")
+        device_type = str(ARGS.device).split(":", 1)[0]
+        next_sam = device_type if device_type in ("cpu", "xpu") else params["sam_backend"]
+        if previous_sam != next_sam:
             skip += (f"{SUB}_sam3d_feat.pt", f"{SUB}_sam3d_feat_static.pt")
         for name in os.listdir(src_sub):
             path = os.path.join(src_sub, name)
@@ -2531,7 +2627,7 @@ def parse_args():
     p.add_argument("--model_cfg", default=None)
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8080)
-    p.add_argument("--device", default="cuda")
+    p.add_argument("--device", default=RUNTIME.default_device())
     p.add_argument("--sam-chunk-default", type=int, default=16, help="Initial value in the manual batch field")
     p.add_argument("--work_dir", default=os.path.join(REPO_ROOT, "output", "web_jobs"))
     args = p.parse_args()

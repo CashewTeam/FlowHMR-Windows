@@ -26,26 +26,34 @@ export function initRuntimeDialog() {
     summarize(state);
     directory.value = state.directory;
     folder.disabled = !state.directory;
-    setText($("runtimeGpu"), state.gpu ? m("runtime.gpu_driver", { name: state.gpu.name, driver: state.gpu.driver })
-      : m("runtime.gpu_unknown"));
-    list.replaceChildren(...state.options.map((option) => {
+    const gpus = state.gpus ?? (state.gpu ? [state.gpu] : []);
+    setText($("runtimeGpu"), () => gpus.length
+      ? gpus.map(({ name, driver }) => driver ? t("runtime.gpu_driver", { name, driver }) : name).join(" / ")
+      : t("runtime.gpu_unknown"));
+    const renderOption = (option) => {
       const item = el("div", "model-item runtime-option");
       item.dataset.version = option.id;
       const info = el("div", "runtime-option-info");
       const title = el("div", "runtime-option-title");
       const isActive = option.id === state.active;
       const pending = state.pending_restart && option.id === state.selected;
-      const label = m(isActive ? "runtime.active" : pending ? "runtime.pending" : option.installed ? "runtime.installed" : "runtime.not_installed");
+      const unmatched = option.compatible === false && option.id.startsWith("rocm");
+      const label = m(isActive ? "runtime.active" : pending ? "runtime.pending" :
+        unmatched ? "runtime.rocm_unmatched" : option.installed ? "runtime.installed" : "runtime.not_installed");
       const badge = el("span", "model-badge", label);
       badge.dataset.state = option.installed ? "ready" : "missing";
       title.append(el("strong", "", option.label), badge);
       if (option.recommended) title.append(el("span", "runtime-recommended", m("common.recommended")));
       info.append(title, el("p", "model-issue", () => [
+        option.models,
+        option.device && option.device !== option.models ? option.device : "",
         localize(serverMessage(option.detail_code, option.detail_params, option.detail)),
         option.bytes ? t("runtime.download_size", { bytes: GB(option.bytes) }) : "",
       ].filter(Boolean).join(" · ")));
+      if (option.note_code) info.append(el("p", "model-issue", m(`server.${option.note_code}`)));
       if (option.source && !option.installed) {
-        const link = el("a", "runtime-source", m(option.detail_code === "runtime_rocm_experimental" ? "runtime.amd_source" : "runtime.source"));
+        const sourceKey = option.id.startsWith("rocm") ? "runtime.amd_source" : option.id === "xpu" ? "runtime.intel_source" : "runtime.source";
+        const link = el("a", "runtime-source", m(sourceKey));
         link.href = option.source;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
@@ -63,7 +71,18 @@ export function initRuntimeDialog() {
       }));
       item.append(info, action);
       return item;
-    }));
+    };
+    const sections = [
+      ...state.options.filter((option) => !option.group && option.id !== "cpu").map(renderOption),
+    ];
+    for (const group of ["radeon", "igpu", "intel"]) {
+      const options = state.options.filter((option) => option.group === group)
+        .sort((a, b) => Number(b.compatible) - Number(a.compatible));
+      sections.push(el("h3", "runtime-group-title", m(`runtime.group_${group}`)));
+      sections.push(...options.map(renderOption));
+    }
+    sections.push(...state.options.filter((option) => option.id === "cpu").map(renderOption));
+    list.replaceChildren(...sections);
     show(stop, running);
     stop.disabled = busy || transfer?.status === "stopping";
     show(restart, !!state.pending_restart && !!window.pywebview?.api?.restart_runtime);

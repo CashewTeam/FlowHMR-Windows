@@ -1,6 +1,6 @@
 // "Settings" card: person selection, camera mode, sampling and post-processing.
 import { $, show } from "./utils.js";
-import { appError, message as m, setAttr, setText } from "./i18n.js";
+import { appError, message as m, setAttr, setText, t } from "./i18n.js";
 
 const MAX_SMOOTHING_FRAMES = 3;
 const validStrength = (value) => Number.isFinite(value) && value >= 0 && value <= 1;
@@ -27,7 +27,7 @@ function samChunkSize(value) {
   return value;
 }
 
-export function initParams(defaults, manualBatchDefault) {
+export function initParams(defaults, manualBatchDefault, hybridAvailable = false, cameraOnCpuForAmdIgpu = false) {
   const manual = bindToggle("optManual");
   const post = bindToggle("optPostprocess");
   const hamer = bindToggle("optHamer");
@@ -45,7 +45,8 @@ export function initParams(defaults, manualBatchDefault) {
   const correctionGround = $("optCorrectionGround"), correctionHeight = $("optCorrectionHeight");
   const seed = $("optSeed"), cfg = $("optCfg"), stride = $("optVggt");
   const steps = $("optSteps"), samChunk = $("optSamChunk");
-  const samHandStride = $("optSamHandStride");
+  const samHandStride = $("optSamHandStride"), samBackend = $("optSamBackend");
+  show("samHybridRow", hybridAvailable);
   show("samHandStrideRow", defaults?.sam_hand_stride != null);
   const smoothingSlider = $("optSmoothing"), smoothing = $("optSmoothingValue");
   const smoothingHint = $("smoothingHint");
@@ -89,7 +90,8 @@ export function initParams(defaults, manualBatchDefault) {
   const syncCamera = () => {
     stride.disabled = cameraMode.value !== "manual";
     show("manualCameraRow", !stride.disabled);
-    setText($("cameraHint"), m(`camera.${cameraMode.value}_hint`));
+    setText($("cameraHint"), () => [t(`camera.${cameraMode.value}_hint`),
+      cameraOnCpuForAmdIgpu ? t("camera.amd_igpu_hint") : ""].filter(Boolean).join(" "));
   };
   cameraMode.addEventListener("change", syncCamera);
   const syncCorrection = () => {
@@ -111,6 +113,7 @@ export function initParams(defaults, manualBatchDefault) {
     hamer.set(!hamerButton.disabled && !!p.hamer);
     hamerStride.value = p.hamer_stride ?? 1;
     samHandStride.value = p.sam_hand_stride ?? 1;
+    samBackend.value = p.sam_backend === "hybrid" ? "hybrid" : "gpu";
     syncHamer();
     soleFit.value = p.sole_fit_strength ?? (p.sole_fit == null ? soleFit.defaultValue : p.sole_fit ? 0.6 : 0);
     syncSoleFitSlider();
@@ -151,6 +154,7 @@ export function initParams(defaults, manualBatchDefault) {
       vggt_interval: overrides.vggt_interval ?? (cameraMode.value === "manual" ? Number(stride.value) : 0),
       sam_chunk_size: autoBatch.get() ? null : samChunkSize(samChunk.value),
       sam_hand_stride: Number(samHandStride.value),
+      sam_backend: hybridAvailable || remember ? samBackend.value : "gpu",
       steps: parseInt(steps.value, 10),
       smoothing_frames: readSmoothingFrames(),
     };
@@ -203,7 +207,7 @@ export function initParams(defaults, manualBatchDefault) {
     preferredCamera = cameraMode.value;
     rememberSettings();
   });
-  for (const input of [footLockPreset, hamerStride, samHandStride]) input.addEventListener("change", rememberSettings);
+  for (const input of [footLockPreset, hamerStride, samHandStride, samBackend]) input.addEventListener("change", rememberSettings);
   for (const id of ["optManual", "optPostprocess", "optHamer", "optSamAuto"]) $(id).addEventListener("click", rememberSettings);
 
   const suggestCorrectionHeight = (report) => {
@@ -211,6 +215,14 @@ export function initParams(defaults, manualBatchDefault) {
   };
 
   return { read, suggestCorrectionHeight,
+    setHybridAvailable(available) {
+      hybridAvailable = available;
+      show("samHybridRow", available);
+    },
+    setCameraOnCpuForAmdIgpu(enabled) {
+      cameraOnCpuForAmdIgpu = enabled;
+      syncCamera();
+    },
     refreshHamer() {
       if (hamerButton.disabled) hamer.set(false);
       syncHamer();

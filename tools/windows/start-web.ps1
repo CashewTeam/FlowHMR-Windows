@@ -101,7 +101,7 @@ if ($DesktopJobName -and $serverProcess) {
 if ($null -eq $serverProcess) {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
     try { $listener.Start() } catch { throw "Port $Port is occupied. Choose another port with -Port or stop the existing server." } finally { $listener.Stop() }
-    $serverProcess = Start-Process -FilePath $pythonExe -ArgumentList @('-u','app.py','--host','127.0.0.1','--port',"$Port",'--device','cuda','--sam-chunk-default','24') -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir 'web.stdout.log') -RedirectStandardError (Join-Path $logDir 'web.stderr.log') -PassThru
+    $serverProcess = Start-Process -FilePath $pythonExe -ArgumentList @('-u','app.py','--host','127.0.0.1','--port',"$Port",'--sam-chunk-default','24') -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir 'web.stdout.log') -RedirectStandardError (Join-Path $logDir 'web.stderr.log') -PassThru
     @{pid=$serverProcess.Id;port=$Port;root=$projectRoot} | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding UTF8
     Write-Host "Starting FlowHMR. Logs: $logDir"
 }

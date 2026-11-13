@@ -9,10 +9,11 @@ Options: python app.py --help. Implementation: tools/web/server.py.
 import os
 import runpy
 
-if __name__ == "__main__":
+if __name__ in ("__main__", "__mp_main__"):
     from flowhmr.runtime_environments import RUNTIME
 
     RUNTIME.configure_process()
+if __name__ == "__main__":
     # Keep this guarded launcher as __main__. Windows spawn reopens that file
     # when starting the camera worker, which does not need to import Flask.
     server_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "web", "server.py")

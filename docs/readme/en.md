@@ -6,30 +6,41 @@
 
 **[Download the portable Windows edition](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [Release notes](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR paper](https://arxiv.org/abs/2610.03691)
 
-## What's new in v0.3.4
+## What's new in v0.3.5
 
-Fixed `Expected a cuda device, but got: cpu` when aligning people after motion generation in low-VRAM mode. **This update mainly targets GPUs with 8 GB of VRAM or less. If you haven't encountered the issue, you can stay on v0.3.3.** After updating, choose **Align scene** on the existing job in History to retry without regenerating motion.
+- **CPU-only motion capture.** Intel and AMD x64 processors can run both fixed and moving camera modes without a GPU. HaMeR finger refinement is unavailable in this mode.
+- **More experimental GPU options.** Added runtimes for AMD integrated graphics, Radeon RX 5000 and Intel XPU. On compatible AMD integrated systems, SAM can split its work between the CPU and GPU to reduce GPU memory use. Intel XPU uses the GPU for SAM image encoding and the CPU for the other stages.
+- **Person detection respects the selected range.** Detection scans only the selected frames and runs again if you change the range. Preview and scene alignment still use the original video frame numbers.
+- **Local character import works with a system proxy.** Fixed an issue where a proxy could intercept local PMX, VRM and FBX requests ([#7](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/issues/7)).
 
-[Release notes](../release-windows.md) · [v0.3.3: adaptive SAM batches and local MCP](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.3)
+[Release notes](../release-windows.md) · [v0.3.4: low-VRAM scene alignment fix](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.4)
 
-## System requirements and supported GPUs
+## System requirements and supported hardware
 
-| Component | Minimum | Recommended |
-| --- | --- | --- |
-| OS | 64-bit Windows 10 / 11 | 64-bit Windows 11 |
-| RAM | 16 GB | 32 GB or more |
-| VRAM | 6 GB | 8 GB or more |
-
-| GPU | Runtime |
+| Component | Requirements and recommendations |
 | --- | --- |
-| NVIDIA GeForce RTX 20 / 30 / 40 / 50 | Enable a compatible CUDA runtime in the app. For RTX 50, choose 12.8 or 12.9. |
-| AMD Radeon RX 9000 / 7000 | On Windows 11, set up the [ROCm runtime](../amd-rocm.md) that matches your GPU. |
+| OS | 64-bit Windows 10 or 11; Windows 11 recommended and required for AMD ROCm and Intel XPU. |
+| RAM | At least 16 GB. 32 GB or more recommended, especially for CPU and integrated graphics. Longer videos can need more. |
+| VRAM (dedicated GPUs only) | Motion capture verified with 6 GB of VRAM. 8 GB or more recommended. |
+
+| Device | Runtime | Status |
+| --- | --- | --- |
+| NVIDIA GeForce RTX 50 | CUDA 12.8 | Verified |
+| NVIDIA GeForce RTX 20 / 30 / 40 | CUDA 12.1 | Experimental |
+| NVIDIA GeForce GTX 10 | CUDA 12.1 | Experimental |
+| AMD Radeon RX 9000 / 7000 | [ROCm](../amd-rocm.md) | Verified |
+| AMD Radeon RX 5000 | [ROCm](../amd-rocm.md) | Experimental |
+| AMD Radeon integrated GPUs (including 740M / 760M / 780M and some 800M models) | [ROCm](../amd-rocm.md) | Experimental (9950X iGPU verified; fixed camera recommended) |
+| Intel Arc A / B and some Core Ultra Arc integrated GPUs | [Intel XPU](../windows.md) | Experimental (GPU runs SAM image encoding only) |
+| Intel / AMD x64 processors | [CPU only](../windows.md) | Verified (AMD Ryzen 9 9950X); Intel experimental |
+
+HaMeR finger refinement is unavailable in CPU mode and on Intel XPU. SAM still runs its built-in hand estimation.
 
 ## Windows desktop edition
 
 - **Capture motion in one window.** Choose who to track and which frames to process, then view the source video and the 3D motion side by side. The timeline keeps playback, seeking and loops in sync. Play the original audio and switch between the skinned mesh and skeleton displays.
 - **Preview and export multiple people together.** Select several people in one video. The combined preview and FBX preserve their relative positions and when each person enters. Reopen previous jobs from the thumbnail history.
-- **Adjust the result to suit the footage.** Tune motion smoothing, foot contact correction and ground height. Enable HaMeR for more detailed finger motion. Fixed camera is the default; use moving camera mode when the camera clearly rotates horizontally, tilts or rolls.
+- **Adjust the result to suit the footage.** Tune motion smoothing, foot contact correction and ground height. Enable HaMeR on a compatible GPU runtime for more detailed finger motion. Fixed camera is the default; use moving camera mode when the camera clearly rotates horizontally, tilts or rolls.
 - **Run locally.** Install the inference runtime and model files as needed. Models load when generation starts. Once set up, the app can process videos offline. The interface is available in 简体中文, 繁體中文, English, 日本語, 한국어, Русский and Français. It remembers your language after you close it.
 - **Motion export.** Export FlowHMR, Mixamo, MetaHuman, or Maya AdvancedSkeleton FBX, MMD VMD, VRM Animation (VRMA), or NPZ. FlowHMR and Mixamo FBX can include a mesh and a T-pose or A-pose at frame **−1**. See the [export guide](../retarget-export.md).
 - **Custom characters.** Preview PMX, VRM 0.x or 1.0, and skinned Mixamo or MetaHuman FBX. Assign a different character to each person and save bone adjustments. Compatible PMX rigs can switch between native IK and FK.
@@ -49,9 +60,11 @@ To try the app yourself, use the repository's [sample footage](../../assets/exam
 ## Quick start
 
 1. On 64-bit Windows 10 or 11, extract the entire `FlowHMR-Windows.zip` archive, open the extracted `FlowHMR` folder and double-click `FlowHMR.exe`. The base package includes Python, the desktop interface and the FBX export component.
-2. Install a compatible graphics driver, then set up CUDA or ROCm as shown above.
+2. Open **Runtime** at the top right, then download and enable the environment for your device from the table above. Update your graphics driver if needed. CPU mode does not require a graphics driver.
 3. Open **Models** and choose **Download all public models** (下载全部公开模型), or download them one by one. The app verifies the files before putting them in `models/`. SAM 3D Body and VGGT-Omega come from ModelScope. If you don't need finger refinement, you can skip HaMeR when downloading individually. Use the table below for the official models that require sign-in.
 4. Drop a video into the app, select people and a frame range, then start generation. Preview the finished motion and export FBX, VMD, VRMA, or NPZ from the menu.
+
+The desktop app checks for updates in the background. Use **Check for updates…** next to the language selector to read release notes, install an update from a downloaded ZIP, or choose a previous version. The current version remains usable if GitHub is unreachable.
 
 ### Which official model packages do I need?
 

@@ -1,7 +1,6 @@
 # Installation
 
-Run all commands from the repository root, not from `docs/`. See [resources.md](resources.md)
-for file locations and [params.md](params.md) for configuration options.
+Run all commands from the FlowHMR-Windows repository root, not from `docs/`. For the portable app and its GPU runtimes, see the [Windows desktop guide](windows.md). See [resources.md](resources.md) for file locations and [params.md](params.md) for configuration options.
 
 ## Setups
 
@@ -18,7 +17,7 @@ Steps marked **[manual]** require license acceptance or account access and must 
 ## 1. Clone
 
 ```bash
-git clone --recursive https://github.com/flowhmr/flowhmr.git FlowHMR
+git clone --recursive https://github.com/xiaoerofficial021-collab/FlowHMR-Windows.git FlowHMR
 cd FlowHMR
 # in an existing clone:
 git submodule update --init --recursive
@@ -31,6 +30,7 @@ conda create -n flowhmr python=3.10 -y
 conda activate flowhmr
 pip install -r requirements.txt -r tools/web/requirements.txt
 pip install --no-build-isolation --no-deps -e third_party/YOLOX
+python tools/windows/adapt_sam.py
 ```
 
 Validated with Python 3.10, PyTorch 2.5.1, and CUDA driver ≥ 470. `requirements.txt` pins

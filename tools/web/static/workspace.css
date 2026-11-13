@@ -51,6 +51,7 @@
 .runtime-option-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .runtime-recommended, .runtime-source { color: var(--active); font-size: 12px; }
 .runtime-option p { margin: 4px 0; }
+.runtime-group-title { margin: 12px 0 0; padding-top: 8px; font-size: 12px; font-weight: 600; }
 .theme-options { padding: 0; border: 0; }
 .theme-option { width: 22px; height: 22px; border-radius: 3px; }
 .theme-option svg { width: 13px; height: 13px; }

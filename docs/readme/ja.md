@@ -6,24 +6,35 @@
 
 **[Windows ポータブル版をダウンロード](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [リリースノート](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR の論文](https://arxiv.org/abs/2610.03691)
 
-## v0.3.4 の変更点
+## v0.3.5 の変更点
 
-VRAM が少ない環境で、複数人のモーション生成後に立ち位置を合わせると `Expected a cuda device, but got: cpu` が発生する問題を修正しました。**主に VRAM 8 GB 以下の環境向けです。問題がなければ v0.3.3 のまま使えます。** 更新後は履歴から既存のタスクを開いて **シーンの位置合わせ** を実行すれば、モーションを再生成せずに再試行できます。
+- **CPU のみで推論。** Intel／AMD の x64 CPU で固定カメラと移動カメラの両方を使えます。HaMeR による指の補正には対応していません。
+- **対応 GPU を拡大。** AMD 内蔵 GPU、Radeon RX 5000、Intel XPU の実験的な実行環境を追加しました。対応する AMD 内蔵 GPU では、SAM の処理を CPU と GPU に分けて GPU メモリの使用量を減らせます。
+- **指定範囲だけで人物を検出。** 開始・終了フレームを変更した場合は新しい範囲で検出し直します。プレビューや複数人の位置合わせでは元動画のフレーム番号を維持します。
+- **キャラクターの読み込みを修正。** PMX、VRM、FBX を選択した後、アプリはローカルサービスに直接接続します。システムのプロキシがリクエストを遮る問題を解消しました（[Issue #7](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/issues/7)）。
 
-[今回のリリースノート](../release-windows.md) · [v0.3.3：SAM バッチの自動調整とローカル MCP](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.3)
+[リリースノート](../release-windows.md) · [v0.3.4：VRAM が少ない環境での複数人の位置合わせを修正](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.4)
 
-## 最小動作環境と対応 GPU
+## 動作環境と対応デバイス
 
-| 項目 | 最小 | 推奨 |
+| 項目 | 目安 | 推奨 |
 | --- | --- | --- |
-| OS | 64 ビット版 Windows 10 / 11 | 64 ビット版 Windows 11 |
-| メモリ | 16 GB | 32 GB 以上 |
-| VRAM | 6 GB | 8 GB 以上 |
+| OS | 64 ビット版 Windows 10 / 11 | 64 ビット版 Windows 11（ROCm と Intel XPU に必須） |
+| システムメモリ | 16 GB 以上 | 32 GB 以上。CPU のみ、または内蔵 GPU の場合は特に推奨。長い動画にはより多くのメモリが必要なことがあります。 |
+| VRAM（単体 GPU のみ） | 6 GB で動作確認済み | 8 GB 以上 |
 
-| GPU | 実行環境 |
-| --- | --- |
-| NVIDIA GeForce RTX 20 / 30 / 40 / 50 | アプリで対応する CUDA を有効にします。RTX 50 シリーズは 12.8 または 12.9 を選択してください。 |
-| AMD Radeon RX 9000 / 7000 | Windows 11 で GPU に対応する [ROCm 実行環境](../amd-rocm.md)を設定します。 |
+| デバイス | 実行環境 | 検証状況 |
+| --- | --- | --- |
+| NVIDIA GeForce RTX 50 | CUDA 12.8 | 検証済み |
+| NVIDIA GeForce RTX 20 / 30 / 40 | CUDA 12.1 | 試験中 |
+| NVIDIA GeForce GTX 10 | CUDA 12.1 | 試験中 |
+| AMD Radeon RX 9000 / 7000 | [ROCm](../amd-rocm.md) | 検証済み |
+| AMD Radeon RX 5000 | [ROCm](../amd-rocm.md) | 試験中 |
+| AMD Radeon 内蔵 GPU（740M / 760M / 780M と一部の 800M を含む） | [ROCm](../amd-rocm.md) | 試験中（9950X の内蔵 GPU は検証済み。固定カメラを推奨） |
+| Intel Arc A／B、一部の Core Ultra の内蔵 Arc GPU | [Intel XPU](../windows.md) | 試験中（GPU は SAM の画像エンコードのみ） |
+| Intel／AMD の x64 CPU | [CPU のみ](../windows.md) | 検証済み（AMD Ryzen 9 9950X）。Intel は試験中 |
+
+CPU のみのモードと Intel XPU では HaMeR による指の補正は利用できません。SAM 標準の手の推定は実行されます。
 
 ## Windows デスクトップ版
 
@@ -49,9 +60,11 @@ VRAM が少ない環境で、複数人のモーション生成後に立ち位置
 ## クイックスタート
 
 1. 64 ビットの Windows 10 または 11 で `FlowHMR-Windows.zip` をすべて展開します。展開された `FlowHMR` フォルダーを開き、`FlowHMR.exe` をダブルクリックします。基本パッケージには Python、UI、FBX 書き出しコンポーネントが含まれます。
-2. 対応する GPU ドライバーをインストールし、上の表に従って CUDA または ROCm を設定します。
+2. 右上の **実行環境** を開き、上の表に従ってデバイスに合う環境をダウンロードして有効にします。GPU を使う場合は対応ドライバーをインストールしてください。**CPU** を選ぶ場合、追加の GPU ドライバーは不要です。
 3. **モデル** で **公開モデルをすべてダウンロード**（下载全部公开模型）を選ぶか、モデルを個別に取得します。公開モデルは検証のうえ `models/` に配置され、SAM 3D Body と VGGT-Omega は ModelScope から取得します。指の補正が不要なら個別に取得して HaMeR を省けます。ログインが必要な公式モデルは下表を参照してください。
 4. アプリに動画をドロップし、人物とフレーム範囲を選択して生成します。結果をプレビューしてから、メニューで FBX、VMD、VRMA、または NPZ に書き出せます。
+
+アプリはバックグラウンドで更新を確認します。言語メニューの隣にある **更新を確認** から、変更点の確認、更新 ZIP の手動読み込み、過去のバージョンの選択ができます。GitHub に接続できなくても、現在のバージョンを使用できます。
 
 ### どの公式モデルをダウンロードする？
 

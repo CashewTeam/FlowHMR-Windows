@@ -152,8 +152,8 @@ def run(video, boxes_path, start, gpu, target, stride=1):
 
             _progress(0, "正在加载 HaMeR 手指模型")
             device = torch.device("cuda", gpu)
-            configure_windows_hip(torch, attention=True)
             torch.cuda.set_device(device)
+            configure_windows_hip(torch, device=device, attention=True)
             backbone, head, cfg = _load_model(device)
             mean = 255 * np.asarray(cfg.MODEL.IMAGE_MEAN, dtype=np.float32)[:, None, None]
             std = 255 * np.asarray(cfg.MODEL.IMAGE_STD, dtype=np.float32)[:, None, None]
@@ -253,6 +253,6 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from flowhmr.runtime_environments import RUNTIME
 
-    RUNTIME.configure_process()
-    video, boxes, start, gpu, target, stride = sys.argv[1:]
+    video, boxes, start, gpu, target, stride, *runtime = sys.argv[1:]
+    RUNTIME.configure_process(name=runtime[0] if runtime else None)
     run(Path(video), Path(boxes), int(start), int(gpu), Path(target), int(stride))

@@ -115,6 +115,8 @@ function applyModelInfo(next) {
   $("optHamer").disabled = !hamerReady;
   setText($("hamerHint"), m(hamerReady ? "hamer.hint" : "hamer.missing_hint"));
   params?.refreshHamer();
+  params?.setHybridAvailable(!!info?.sam_hybrid_available);
+  params?.setCameraOnCpuForAmdIgpu(!!info?.camera_on_cpu_for_amd_igpu);
   if (variantsChanged) viewer.setBodyVariants(info?.body_variants, info?.body_reference);
 }
 
@@ -136,7 +138,8 @@ if (info?.postprocess_available === false) {
   $("optPostprocess").disabled = true;
   setText($("postprocessHint"), m("correction.unavailable"));
 }
-params = initParams(info?.defaults ?? {}, info?.sam_manual_default ?? 24);
+params = initParams(info?.defaults ?? {}, info?.sam_manual_default ?? 24,
+  !!info?.sam_hybrid_available, !!info?.camera_on_cpu_for_amd_igpu);
 if (info?.runtime?.supported) runtime.restore();
 const jobs = (await history.refresh()) ?? [];
 const savedJob = localStorage.getItem("flowhmr-last-job");

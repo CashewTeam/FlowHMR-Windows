@@ -15,7 +15,6 @@ import subprocess
 import sys
 import threading
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import webview
@@ -168,8 +167,39 @@ def create_file_picker(window, port, backend):
     return choose
 
 
+def register_character_file(port, key, path):
+    # This authenticated request is local IPC. Do not use an HTTP proxy or
+    # follow redirects, which could send the path and session key elsewhere.
+    connection = HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        connection.request(
+            "POST", "/api/desktop/character-file",
+            json.dumps({"file": path}, ensure_ascii=False).encode("utf-8"),
+            {"Content-Type": "application/json", "X-FlowHMR-Desktop-Key": key},
+        )
+        with connection.getresponse() as response:
+            if response.status != 200:
+                logging.warning("Local character picker returned HTTP %d", response.status)
+                if response.status == 403:
+                    return {"error_code": "character_picker_session"}
+                if response.status in (400, 413):
+                    return {"error_code": "character_picker_invalid"}
+                return {"error_code": "character_picker_retry"}
+            data = json.loads(response.read(16384))
+        if isinstance(data, dict) and all(isinstance(data.get(k), str) and data[k] for k in ("ticket", "name")):
+            return {"ticket": data["ticket"], "name": data["name"]}
+        logging.warning("Local character picker did not return a file ticket")
+    except (OSError, HTTPException) as error:
+        logging.warning("Local character picker connection failed (%s, errno=%s)",
+                        type(error).__name__, getattr(error, "winerror", None) or getattr(error, "errno", None))
+    except (ValueError, RecursionError):
+        logging.warning("Local character picker returned invalid JSON")
+    finally:
+        connection.close()
+    return {"error_code": "character_picker_retry"}
+
+
 def expose_model_pickers(window, port, backend, choose):
-    origin = f"http://127.0.0.1:{port}"
 
     def choose_model_folder():
         return choose(webview.FileDialog.FOLDER)
@@ -181,14 +211,8 @@ def expose_model_pickers(window, port, backend, choose):
         path = choose(webview.FileDialog.OPEN, ("PMX VRM FBX (*.pmx;*.vrm;*.fbx)",))
         if not path:
             return None
-        payload = json.dumps({"file": path}).encode("utf-8")
-        req = Request(origin + "/api/desktop/character-file", data=payload,
-                      headers={"Content-Type": "application/json", "X-FlowHMR-Desktop-Key": backend.character_key})
-        try:
-            with urlopen(req, timeout=10) as result:
-                return json.load(result)
-        except (OSError, ValueError):
-            return {"error": "character_file"}
+        result = register_character_file(port, backend.character_key, path)
+        return result if "error_code" not in result else {"error": "character_file", **result}
 
     window.expose(choose_model_folder, choose_model_archive, choose_character_file)
 
@@ -322,6 +346,22 @@ def connect(window, port, backend, *, trial=False):
         return False
 
 
+def get_backend_json(port, path, timeout):
+    # These probes must reach the local backend even when a system proxy is set.
+    connection = HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        connection.request("GET", path)
+        with connection.getresponse() as response:
+            if response.status != 200:
+                raise OSError(f"Local backend returned HTTP {response.status}")
+            data = json.loads(response.read(512 * 1024))
+        if not isinstance(data, dict):
+            raise ValueError("Invalid local backend response")
+        return data
+    finally:
+        connection.close()
+
+
 def expose_runtime_restart(window, port, backend):
     restart_lock = threading.Lock()
     url = f"http://127.0.0.1:{port}"
@@ -350,9 +390,8 @@ def expose_runtime_restart(window, port, backend):
         if f"{current.scheme}://{current.netloc}" != url:
             return False
         try:
-            with urlopen(url + "/api/runtime", timeout=5) as response:
-                pending = json.load(response).get("pending_restart", False)
-        except (OSError, ValueError):
+            pending = get_backend_json(port, "/api/runtime", timeout=5).get("pending_restart", False)
+        except (OSError, HTTPException, ValueError, RecursionError):
             return False
         if not pending or backend.closed.is_set() or not restart_lock.acquire(blocking=False):
             return False
@@ -381,11 +420,10 @@ def desktop_port(requested):
                 port = listener.getsockname()[1]
         except OSError:
             try:
-                with urlopen(f"http://127.0.0.1:{port}/api/info", timeout=.8) as response:
-                    directory = json.load(response)["model_files"]["directory"]
+                directory = get_backend_json(port, "/api/info", timeout=.8)["model_files"]["directory"]
                 if Path(directory).resolve() != (ROOT / "models").resolve():
                     continue
-            except (OSError, ValueError, KeyError, TypeError):
+            except (OSError, HTTPException, ValueError, RecursionError, KeyError, TypeError):
                 continue
         marker.parent.mkdir(exist_ok=True)
         marker.write_text(str(port), encoding="ascii")

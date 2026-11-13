@@ -9,6 +9,8 @@ from contextlib import nullcontext
 import numpy as np
 import torch
 
+from .sam_feature_only import unmasked_features
+
 
 class _HandTokensReady(Exception):
     """Local control flow: the hand decoder has produced its conditioning token."""
@@ -27,7 +29,7 @@ def _combine_batches(batches, device):
 @torch.no_grad()
 def extract_tokens(estimator, images, boxes, cameras, *, gpu_preprocess=False,
                    merge_hands=False, hand_boxes_out=None, hand_boxes_only=False,
-                   hand_indices=None):
+                   hand_indices=None, fast_features=False, hand_skeleton=None):
     """Return CPU float32 ``(frames, 3072)`` tokens in body/left/right order.
 
     ``images`` contains RGB uint8 frames, one selected person per frame.
@@ -112,11 +114,16 @@ def extract_tokens(estimator, images, boxes, cameras, *, gpu_preprocess=False,
     # Upstream helpers use the current CUDA device internally. Scope it to the
     # estimator, including when callers select a non-default GPU.
     context = torch.cuda.device(device) if device.type == "cuda" else nullcontext()
+    # The public single-image route uses the full body's pose to initialize
+    # the hands. Only our batched path consumes hand boxes directly.
+    can_skip = (fast_features and not original_single and not model.training
+                and model.cfg.MODEL.DECODER.get("DO_HAND_DETECT_TOKENS", False))
+    feature_context = unmasked_features(model, hand_skeleton) if can_skip else nullcontext()
     state_names = ("_batch_size", "_max_num_person", "_person_valid", "body_batch_idx", "hand_batch_idx")
     state = {name: getattr(model, name) for name in state_names if hasattr(model, name)}
     handles = []
     try:
-        with context:
+        with context, feature_context:
             if not hand_boxes_only:
                 handles.append(model.decoder.register_forward_hook(capture_body))
                 handles.append(model.decoder_hand.register_forward_hook(capture_hand))

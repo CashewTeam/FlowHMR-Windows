@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 import datetime
 import os
 import os.path as osp
@@ -12,10 +13,11 @@ import torch
 from torch import Tensor
 
 from flowhmr.model_files import missing_model_paths, sam3d_paths
-from flowhmr.runtime_rocm import supports_bf16
+from flowhmr.runtime_rocm import supports_bf16, uses_shared_memory
 
 from .runtime_capabilities import SAMMemoryError
 from .sam_batch import MIB, SAMBatchPlanner, memory_error_resource
+from .sam_feature_only import make_hand_skeleton
 
 # Repo root + local sam_3d_body package path
 _repo_root = osp.normpath(osp.join(osp.dirname(__file__), "..", ".."))
@@ -105,7 +107,8 @@ class Sam3DTokenExtractor:
     """
 
     def __init__(self, estimator, *, frame_batch_size=16,
-                 use_gpu_preprocess=True, hand_stride=1, hand_seed=HAND_SAMPLE_SEED):
+                 use_gpu_preprocess=True, hand_stride=1, hand_seed=HAND_SAMPLE_SEED,
+                 fast_features=False, cpu_backbone=False, xpu_backbone=None):
         self.estimator = estimator
         self.faces = estimator.faces
         if type(frame_batch_size) is not int or frame_batch_size < 1:
@@ -118,10 +121,22 @@ class Sam3DTokenExtractor:
         self.use_gpu_preprocess = bool(use_gpu_preprocess)
         self.hand_stride = hand_stride
         self.hand_seed = hand_seed
+        self.fast_features = fast_features
+        self.cpu_backbone = cpu_backbone
+        self._xpu_backbone = xpu_backbone
+        self._hand_skeleton = make_hand_skeleton(estimator.model.head_pose_hand) if fast_features else None
         self._capture_tokens = False
         self._body_tokens: List[torch.Tensor] = []
         self._hand_tokens: List[torch.Tensor] = []
         self._hooks = self._install_hooks()
+
+    @property
+    def xpu_backbone_device(self):
+        return self._xpu_backbone.device if self._xpu_backbone is not None else None
+
+    def release_accelerator(self):
+        if self._xpu_backbone is not None:
+            self._xpu_backbone.release_accelerator()
 
     def _install_hooks(self) -> List[torch.utils.hooks.RemovableHandle]:
         model = self.estimator.model
@@ -225,6 +240,8 @@ class Sam3DTokenExtractor:
         if not images:
             return torch.empty((0, 2, 4) if hand_boxes_only else (0, 3072), dtype=torch.float32)
         gpu_preprocess = self.use_gpu_preprocess if use_gpu_preprocess is None else bool(use_gpu_preprocess)
+        if self._xpu_backbone is not None:
+            gpu_preprocess = False
         if hand_indices is not None:
             hand_indices = np.asarray(hand_indices, dtype=np.int64)
             if hand_indices.size and (hand_indices.min() < 0 or hand_indices.max() >= len(images)):
@@ -241,7 +258,7 @@ class Sam3DTokenExtractor:
                 self.estimator, images[start:stop], boxes[start:stop], cameras[start:stop],
                 gpu_preprocess=gpu_preprocess, merge_hands=merge_hands,
                 hand_boxes_out=hand_boxes_out, hand_boxes_only=hand_boxes_only,
-                hand_indices=local,
+                hand_indices=local, fast_features=self.fast_features, hand_skeleton=self._hand_skeleton,
             ))
         return tokens[0] if len(tokens) == 1 else torch.cat(tokens)
 
@@ -252,6 +269,7 @@ class Sam3DTokenExtractor:
         self._hooks.clear()
         self._body_tokens.clear()
         self._hand_tokens.clear()
+        self.release_accelerator()
 
     # Helpers
     @staticmethod
@@ -335,24 +353,28 @@ class Sam3DTokenExtractor:
         bbox_xyxy = self._pad_crop(bbox_xyxy, total_frames)
         K_all = self._pad_crop(K_all, total_frames)
 
-        cap = cv2.VideoCapture(video_path)
         end = min(total_frames, max_frames) if max_frames is not None and max_frames > 0 else total_frames
+        if not 0 <= start_frame < end:
+            raise ValueError(f"Invalid SAM frame range: [{start_frame},{end})")
         pbar_total = end - start_frame
         output = None
         planner = None
         done = 0
         t_start = time.time()
+        from .runtime_video_processing import open_video_at_frame
+
+        cap = open_video_at_frame(video_path, start_frame, lambda: _call_progress(
+            progress_cb, "sam", 0, pbar_total, "sam: start"))
         try:
-            if not cap.isOpened():
-                raise ValueError(f"cannot open video: {video_path}")
-            if not 0 <= start_frame < end:
-                raise ValueError(f"Invalid SAM frame range: [{start_frame},{end})")
             sampled_frames = (None if hand_stride == 1 or _hand_boxes_only else
                               sample_hand_frames(pbar_total, hand_stride, self.hand_seed) + start_frame)
             if adaptive_batch:
                 width = max(1, int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
                 height = max(1, int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-                planner = SAMBatchPlanner(device, width * height * 3)
+                if self.xpu_backbone_device is not None:
+                    planner = SAMBatchPlanner(self.xpu_backbone_device, width * height * 3, host_processing=True)
+                else:
+                    planner = SAMBatchPlanner(device, width * height * 3)
 
             def hand_samples(first, count):
                 if sampled_frames is None:
@@ -361,10 +383,6 @@ class Sam3DTokenExtractor:
                 return sampled_frames[left:right] - first
 
             _call_progress(progress_cb, "sam", 0, pbar_total, "sam: start")
-            if start_frame and not cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame):
-                for _ in range(start_frame):
-                    if not cap.grab():
-                        raise ValueError(f"Cannot reach video frame {start_frame + 1}")
             frames = []
             eof = False
             last_logged = 0
@@ -390,7 +408,8 @@ class Sam3DTokenExtractor:
                     try:
                         count = planner.choose(before, remaining, pending_output, hand_crops)
                     except SAMMemoryError as error:
-                        if error.resource != "vram" or planner.low_memory or not can_split_hands:
+                        can_save_memory = error.resource == "vram" or planner.shared_gpu
+                        if not can_save_memory or planner.low_memory or not can_split_hands:
                             raise
                         planner.split_hands()
                         count = planner.choose(before, remaining, pending_output, hand_crops)
@@ -512,7 +531,7 @@ class Sam3DTokenExtractor:
         batch = {key: value.to(device) for key, value in batch.items() if isinstance(value, Tensor)}
         model = self.estimator.model
         try:
-            with torch.cuda.device(device):
+            with torch.cuda.device(device) if device.type == "cuda" else nullcontext():
                 model._initialize_batch(batch)
                 output = model.forward_step(batch, decoder_type="body")["mhr"]
                 return (output["pred_keypoints_3d"][:, joint_ids]
@@ -632,29 +651,42 @@ def _call_progress(
         progress_cb(stage, current, total, message)
 
 
-def _maybe_convert_backbone_to_fp16(sam_model, device: torch.device) -> None:
+def _select_backbone_precision(sam_model, device: torch.device) -> None:
     if sam_model.backbone_dtype != torch.bfloat16:
         return
-    gpu_supports_bf16_tc = supports_bf16(torch, device)
-    if gpu_supports_bf16_tc:
-        return
+    if device.type == "cpu":
+        from .sam_cpu_backbone import cpu_backbone_supported
 
-    print(f" [sam3d] GPU {torch.cuda.get_device_name(device)} has no BF16 Tensor Cores, "
-          f"converting backbone to FP16")
-    for p in sam_model.backbone.parameters():
-        if p.dtype == torch.bfloat16:
-            p.data = p.data.to(torch.float16)
-    for buf in sam_model.backbone.buffers():
-        if buf.dtype == torch.bfloat16:
-            buf.data = buf.data.to(torch.float16)
-    sam_model.backbone_dtype = torch.float16
+        if cpu_backbone_supported():
+            print(" [sam3d] CPU: using BF16 for the SAM backbone")
+            return
+        dtype = torch.float32
+    else:
+        if supports_bf16(torch, device):
+            return
+        dtype = torch.float16
+    print(f" [sam3d] {device}: using {dtype} for the SAM backbone")
+    for tensor in (*sam_model.backbone.parameters(), *sam_model.backbone.buffers()):
+        if tensor.dtype == torch.bfloat16:
+            tensor.data = tensor.data.to(dtype)
+    sam_model.backbone_dtype = dtype
 
 
 def build_sam3d_extractor(device: torch.device, *, frame_batch_size=16,
                           use_gpu_preprocess=True, use_compile=None, load_device=None,
-                          hand_stride=1, hand_seed=HAND_SAMPLE_SEED) -> Sam3DTokenExtractor:
+                          hand_stride=1, hand_seed=HAND_SAMPLE_SEED, cpu_backbone=False,
+                          xpu_backbone_device=None) -> Sam3DTokenExtractor:
     from .sam_compile import enable_sam_compile, resolve_sam_compile
 
+    device = torch.device(device)
+    if xpu_backbone_device is not None:
+        xpu_backbone_device = torch.device(xpu_backbone_device)
+        if (xpu_backbone_device.type != "xpu" or device.type != "cpu" or cpu_backbone
+                or (load_device is not None and torch.device(load_device).type != "cpu")):
+            raise ValueError("Intel SAM uses an XPU encoder with CPU pose decoders")
+        if use_compile:
+            raise ValueError("SAM compilation is unavailable for the Intel runtime")
+        use_compile = False
     compile_backbone = resolve_sam_compile(device, use_compile)
     paths = sam3d_paths()
     missing = missing_model_paths(paths)
@@ -667,13 +699,29 @@ def build_sam3d_extractor(device: torch.device, *, frame_batch_size=16,
         mhr_path=str(mhr),
         device=load_device if load_device is not None else device,
     )
-    _maybe_convert_backbone_to_fp16(sam_model, device)
+    xpu_backbone = None
+    if xpu_backbone_device is not None:
+        from .sam_xpu_backbone import XPUSAMBackbone
+
+        xpu_backbone = XPUSAMBackbone(sam_model.backbone, xpu_backbone_device, sam_model.backbone_dtype)
+        sam_model.backbone = xpu_backbone
+        # Leave CPU crop inputs in FP32 until the encoder converts them once.
+        sam_model.backbone_dtype = torch.float32
+    else:
+        _select_backbone_precision(sam_model, device)
+    if cpu_backbone:
+        from .sam_cpu_backbone import CPUSAMBackbone
+
+        sam_model.backbone = CPUSAMBackbone(sam_model.backbone)
+        print(f" [sam3d] Hybrid mode: CPU BF16 backbone ({sam_model.backbone.threads} threads), HIP decoders", flush=True)
     if compile_backbone:
         enable_sam_compile(sam_model, device)
     estimator = SAM3DBodyEstimator(sam_3d_body_model=sam_model, model_cfg=sam_cfg)
     return Sam3DTokenExtractor(estimator, frame_batch_size=frame_batch_size,
-                               use_gpu_preprocess=use_gpu_preprocess,
-                               hand_stride=hand_stride, hand_seed=hand_seed)
+                               use_gpu_preprocess=use_gpu_preprocess and device.type == "cuda",
+                               hand_stride=hand_stride, hand_seed=hand_seed,
+                               fast_features=device.type == "cpu" or uses_shared_memory(torch, device),
+                               cpu_backbone=cpu_backbone, xpu_backbone=xpu_backbone)
 
 
 if __name__ == "__main__":

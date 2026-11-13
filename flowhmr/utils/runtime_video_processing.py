@@ -13,6 +13,7 @@ import torch
 from torch import Tensor
 
 from flowhmr.model_files import YOLOX, file_present, resolve_model
+from flowhmr.utils.runtime_capabilities import detection_request_key
 
 # Repo root (for locating checkpoints)
 _repo_root = osp.normpath(osp.join(osp.dirname(__file__), "..", ".."))
@@ -59,6 +60,28 @@ class TrackingResult:
     total_frames: int
     width: int
     height: int
+    scanned_range: tuple[int, int] | None = None  # inclusive source frame indices
+
+
+def open_video_at_frame(video_path, start_frame, cancel_check=None):
+    """Seek to an absolute frame, or skip from the start without running inference."""
+    cap = cv2.VideoCapture(video_path)
+    try:
+        if not cap.isOpened():
+            raise ValueError(f"cannot open video: {video_path}")
+        if start_frame and (not cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+                            or cap.get(cv2.CAP_PROP_POS_FRAMES) != start_frame):
+            cap.release()
+            cap = cv2.VideoCapture(video_path)
+            for _ in range(start_frame):
+                if cancel_check is not None:
+                    cancel_check()
+                if not cap.grab():
+                    raise ValueError("起始帧超出素材范围。")
+        return cap
+    except BaseException:
+        cap.release()
+        raise
 
 
 # YOLOXHumanDetector
@@ -259,28 +282,36 @@ class VideoProcessor:
         nms_thr: float = 0.3,
         bytetrack_thresh: float = 0.25,
         bytetrack_match: float = 0.8,
+        start_frame: int = 0,
+        end_frame: int | None = None,
+        on_progress=None,
+        cancel_check=None,
     ) -> TrackingResult:
-        """Run per-frame detection + ByteTrack, returning all tracks."""
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise ValueError(f"cannot open video: {video_path}")
-
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if total_frames <= 0:
-            total_frames = None
-
+        """Detect only the requested frames and keep track times on the original video timeline."""
+        if start_frame < 0 or (end_frame is not None and end_frame < start_frame):
+            raise ValueError("人物检测的起止帧无效。")
         tracker = sv.ByteTrack(
             track_activation_threshold=bytetrack_thresh,
             minimum_matching_threshold=bytetrack_match,
         )
         raw_tracks: Dict[int, Dict[str, list]] = defaultdict(lambda: defaultdict(list))
-        frame_idx = 0
+        frame_idx = start_frame
 
-        pbar_total = total_frames if total_frames else "?"
+        cap = open_video_at_frame(video_path, start_frame, cancel_check)
         try:
-            while True:
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or None
+            planned_end = end_frame
+            if total_frames is not None and total_frames > 0:
+                planned_end = min(end_frame, total_frames - 1) if end_frame is not None else total_frames - 1
+            planned = planned_end - start_frame + 1 if planned_end is not None else None
+            pbar_total = planned if planned is not None else "?"
+            if planned is not None and planned <= 0:
+                raise ValueError(f"起始帧超出素材范围（共 {total_frames} 帧）。")
+            while end_frame is None or frame_idx <= end_frame:
+                if cancel_check is not None:
+                    cancel_check()
                 ok, frame_bgr = cap.read()
                 if not ok:
                     break
@@ -312,13 +343,16 @@ class VideoProcessor:
                     raw_tracks[tid_i]["frames"].append(frame_idx)
 
                 frame_idx += 1
-                if frame_idx % 100 == 0:
-                    print(f">>> bbox detection: {frame_idx}/{pbar_total} frames")
+                processed = frame_idx - start_frame
+                if processed % 100 == 0:
+                    print(f">>> bbox detection: {processed}/{pbar_total} frames", flush=True)
+                if on_progress is not None:
+                    on_progress(processed, planned)
         finally:
             cap.release()
 
-        if frame_idx <= 0:
-            raise ValueError(f"no frames could be read from video: {video_path}")
+        if frame_idx == start_frame:
+            raise ValueError("处理区间内没有可读取的视频帧。")
 
         # Build TrackInfo list
         tracks: List[TrackInfo] = []
@@ -334,8 +368,13 @@ class VideoProcessor:
                 avg_area=float(np.mean(areas)),
             ))
 
-        print(f">>> bbox detection done: {frame_idx} frames, {len(tracks)} tracks")
-        return TrackingResult(tracks=tracks, total_frames=frame_idx, width=width, height=height)
+        last = frame_idx - 1
+        # At EOF the decoder's count wins; after a deliberate stop use the file metadata.
+        if end_frame is None or last < end_frame:
+            total_frames = frame_idx
+        print(f">>> bbox detection done: {frame_idx - start_frame} frames "
+              f"(source {start_frame + 1}–{last + 1}), {len(tracks)} tracks", flush=True)
+        return TrackingResult(tracks, max(total_frames or 0, frame_idx), width, height, (start_frame, last))
 
     # Post-processing (all static)
     @staticmethod
@@ -348,13 +387,13 @@ class VideoProcessor:
         return scored[0][0]
 
     @staticmethod
-    def interpolate_track(track: TrackInfo, total_frames: int) -> np.ndarray:
-        """Linearly interpolate a track's bboxes to every frame. Returns (total_frames, 4) float32."""
+    def interpolate_track(track: TrackInfo, total_frames: int, *, first_frame: int = 0) -> np.ndarray:
+        """Interpolate boxes at consecutive source frames starting at first_frame."""
         order = np.argsort(track.frames)
         frames_sorted = track.frames[order].astype(np.float32)
         bboxes_sorted = track.bboxes[order]
 
-        all_frames = np.arange(total_frames, dtype=np.float32)
+        all_frames = np.arange(first_frame, first_frame + total_frames, dtype=np.float32)
         bbox_arr = np.empty((total_frames, 4), dtype=np.float32)
 
         if frames_sorted.size == 0:
@@ -376,17 +415,22 @@ class VideoProcessor:
         """Per-frame boxes of one track over its own frame range.
 
         Returns (bbox (N, 4) float32 xyxy, start_end int64 [first, last] frame, inclusive).
-        track_idx < 0 (or no tracks) gives a full-image box over the whole video.
+        track_idx < 0 (or no tracks) gives a full-image box over the scanned interval.
         """
         if track_idx < 0 or not result.tracks:
+            start, end = result.scanned_range or (0, max(result.total_frames - 1, 0))
             full_box = np.array([0.0, 0.0, float(result.width), float(result.height)], dtype=np.float32)
-            bbox = np.tile(full_box[None, :], (result.total_frames, 1)).astype(np.float32)
-            return bbox, np.array([0, max(result.total_frames - 1, 0)], dtype=np.int64)
+            bbox = np.tile(full_box[None, :], (end - start + 1, 1))
+            return bbox, np.array([start, end], dtype=np.int64)
         track = result.tracks[track_idx]
         start, end = int(track.frames.min()), int(track.frames.max())
-        bbox_full = VideoProcessor.interpolate_track(track, result.total_frames)
-        bbox_full = VideoProcessor.smooth_bboxes(bbox_full, result.width, result.height)
-        return bbox_full[start:end + 1].astype(np.float32), np.array([start, end], dtype=np.int64)
+        bbox = VideoProcessor.interpolate_track(track, end - start + 1, first_frame=start)
+        return VideoProcessor.smooth_bboxes(bbox, result.width, result.height), np.array([start, end], dtype=np.int64)
+
+    @staticmethod
+    def save_detected_track(path, result, track_idx, frame_range) -> None:
+        bbox, start_end = VideoProcessor.track_bboxes(result, track_idx)
+        np.savez(path, bbox=bbox, start_end=start_end, detection_request=detection_request_key(frame_range))
 
     @staticmethod
     def smooth_bboxes(bbox_arr: np.ndarray, width: int, height: int) -> np.ndarray:

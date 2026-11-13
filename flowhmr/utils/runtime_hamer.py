@@ -121,6 +121,10 @@ def refine_fingers(video_path, hand_boxes_path, start_frame, output, *, device,
     import numpy as np
     import torch
 
+    from flowhmr.runtime_environments import RUNTIME
+    from flowhmr.runtime_rocm import uses_shared_memory
+    from flowhmr.utils.sam_batch import MIB, require_shared_ram
+
     if type(stride) is not int or stride not in HAMER_STRIDES:
         raise ValueError("HaMeR 采样间隔须为 1、2、3 或 4 帧。")
     model_paths, issue = hamer_model_status(device)
@@ -132,6 +136,8 @@ def refine_fingers(video_path, hand_boxes_path, start_frame, output, *, device,
     with torch.cuda.device(device):
         gpu = torch.cuda.current_device()
         torch.cuda.empty_cache()
+    if uses_shared_memory(torch, device):
+        require_shared_ram(2 * model_paths[0].stat().st_size + 512 * MIB)
     video = Path(video_path).resolve()
     worker = Path(__file__).with_name("runtime_hamer_worker.py")
     frames = output["rot6d"].shape[1]
@@ -144,6 +150,8 @@ def refine_fingers(video_path, hand_boxes_path, start_frame, output, *, device,
         target = Path(temp) / "fingers.npz"
         command = [sys.executable, "-I", "-B", "-X", "utf8", "-u", str(worker), str(video),
                    str(Path(hand_boxes_path).resolve()), str(start_frame), str(gpu), str(target), str(stride)]
+        if RUNTIME.active is not None:
+            command.append(RUNTIME.active)  # Keep the parent's GPU runtime in the isolated interpreter.
         events = Queue()
         tail = deque(maxlen=24)
         with subprocess.Popen(command, cwd=temp, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

@@ -256,6 +256,16 @@
           手动批次可按显存调整。处理起止帧在底部时间轴设置。
         </p>
         <hr class="property-divider">
+        <div class="setting-row hidden" id="samHybridRow">
+          <div>
+            <div class="setting-label" data-i18n="sam.backend">SAM 运行模式</div>
+            <div class="setting-help" id="samHybridHint" data-i18n="sam.hybrid_hint">混合模式用 CPU 提取图像特征，核显继续解码。可降低 GPU 内存占用，速度可能更慢。</div>
+          </div>
+          <select class="input setting-select" id="optSamBackend" data-i18n-label="sam.backend" aria-describedby="samHybridHint">
+            <option value="gpu" data-i18n="sam.backend_gpu">GPU</option>
+            <option value="hybrid" data-i18n="sam.backend_hybrid">CPU + GPU（省显存）</option>
+          </select>
+        </div>
         <div class="setting-row" id="samHandStrideRow">
           <div>
             <div class="setting-label" data-i18n="sam.hand_stride">SAM 手部采样</div>

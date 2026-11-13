@@ -19,13 +19,15 @@ from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 from zipfile import BadZipFile
 
-import cv2
 import numpy as np
 import torch
 
 from flowhmr.model_files import VGGT, file_present, resolve_model
-from flowhmr.runtime_rocm import configure_windows_hip, supports_bf16
+from flowhmr.runtime_rocm import configure_windows_hip, supports_bf16, uses_shared_memory
 from flowhmr.utils.runtime_image_io import write_image
+from flowhmr.utils.runtime_capabilities import InferenceRAMError, SharedCameraSamplingError, SharedGPUMemoryError
+from flowhmr.utils.sam_batch import require_inference_ram, require_shared_ram, shared_ram_room
+from flowhmr.utils.runtime_video_processing import open_video_at_frame
 
 _repo_root = osp.normpath(osp.join(osp.dirname(__file__), "..", ".."))
 _vggt_repo_dir = osp.join(_repo_root, "third_party", "vggt-omega")
@@ -91,7 +93,10 @@ class _CameraPrecisionError(RuntimeError):
 
 def camera_cuda_budget(device):
     free, total = torch.cuda.mem_get_info(device)
-    return max(0, free - max(768 * _MIB, int(total * 0.06)))
+    room = free - max(768 * _MIB, int(total * 0.06))
+    if uses_shared_memory(torch, device):
+        room = min(room, shared_ram_room())
+    return max(0, room)
 
 
 def _camera_attempts(frames, requested, device, budget):
@@ -100,6 +105,7 @@ def _camera_attempts(frames, requested, device, budget):
                          for count in (64, 32, 16))
     if device.type != "cuda":
         yield device, medium, 320, False
+        yield device, low, 256, False
         return
     if budget >= 8 * _GIB:
         yield device, full, 512, False
@@ -120,16 +126,39 @@ def _camera_attempts(frames, requested, device, budget):
         yield torch.device("cpu"), low, 256, False
 
 
+_SHARED_CAMERA_MAX_SAMPLES = 16
+
+
+def _shared_camera_attempts(frames, requested):
+    """Use the CPU on integrated GPUs without allocating the GPU's shared budget."""
+    if requested and _sample_count(frames, requested) > _SHARED_CAMERA_MAX_SAMPLES:
+        return
+    previous = None
+    for samples, resolution in ((_SHARED_CAMERA_MAX_SAMPLES, 320), (12, 256), (8, 256)):
+        interval = requested or max(1, math.ceil((frames - 1) / (samples - 1)))
+        if (interval, resolution) != previous:
+            yield torch.device("cpu"), interval, resolution, False
+            previous = (interval, resolution)
+
+
 def _sample_count(frames, interval):
     return (frames - 2) // interval + 2 if frames > 1 else 1
+
+
+def _cpu_camera_workspace(samples, resolution):
+    # Budget FP32 global attention in case a fused CPU kernel is unavailable.
+    # At most resolution² pixels, ViT patch size 16 and 17 register/camera tokens.
+    tokens = samples * ((resolution // 16) ** 2 + 17)
+    return (1024 + 32 * samples) * _MIB + 2 * 16 * 4 * tokens ** 2
 
 
 def _camera_worker(video_path, output_npz, frame_range, frames, device, interval, resolution, compact, budget):
     device = torch.device(device)
     try:
         if device.type == "cuda":
-            configure_windows_hip(torch, attention=True)
-            torch.cuda.set_device(device.index if device.index is not None else 0)
+            device = torch.device("cuda", device.index if device.index is not None else 0)
+            torch.cuda.set_device(device)
+            configure_windows_hip(torch, device=device, attention=True)
             _, total = torch.cuda.mem_get_info(device)
             limit = min(budget, camera_cuda_budget(device))
             if limit < 3 * _GIB:
@@ -166,22 +195,43 @@ def _camera_worker(video_path, output_npz, frame_range, frames, device, interval
 def extract_vggt_camera_isolated(video_path, *, output_npz, frame_range, expected_len,
                                  device, frame_interval, cancel_check, on_progress, release_cuda=nullcontext):
     """Run the expensive camera forward in a cancellable process with a VRAM budget."""
-    intervals = camera_intervals(expected_len, frame_interval)
+    device = torch.device(device)
+    shared_gpu = device.type == "cuda" and uses_shared_memory(torch, device)
+    if shared_gpu:
+        shared_attempts = tuple(_shared_camera_attempts(expected_len, frame_interval))
+        # Reusing a compatible estimate incurs no VGGT allocation.
+        intervals = tuple(dict.fromkeys((*camera_intervals(expected_len, frame_interval),
+                                         *(attempt[1] for attempt in shared_attempts))))
+    else:
+        intervals = camera_intervals(expected_len, frame_interval)
     cached = _read_camera_cache(output_npz, frame_range, expected_len, intervals, upgrade_compact=True)
     if cached is not None:
         print(f"  [vggt] skip cached camera: {output_npz}", flush=True)
         on_progress("已复用相机估计")
         return cached
 
-    device = torch.device(device)
     cancel_check()
+    if shared_gpu and not shared_attempts:
+        raise SharedCameraSamplingError(
+            "AMD 核显的运动相机由 CPU 估计。请改用自动采样、增大手动间隔，或改用固定机位。"
+        )
     invalid_pose = False
+    ram_failure = None
     with release_cuda(), tempfile.TemporaryDirectory(prefix=".camera-", dir=osp.dirname(osp.abspath(output_npz))) as scratch:
-        budget = camera_cuda_budget(device) if device.type == "cuda" else None
+        budget = camera_cuda_budget(device) if device.type == "cuda" and not shared_gpu else None
+        attempts = shared_attempts if shared_gpu else _camera_attempts(expected_len, frame_interval, device, budget)
         temporary = osp.join(scratch, "camera.npz")
-        for target, interval, resolution, compact in _camera_attempts(expected_len, frame_interval, device, budget):
+        for target, interval, resolution, compact in attempts:
             cancel_check()
             samples = _sample_count(expected_len, interval)
+            if target.type == "cpu":
+                # Include the checkpoint plus worst-case attention workspace.
+                needed = osp.getsize(resolve_model(VGGT)) + _cpu_camera_workspace(samples, resolution)
+                try:
+                    (require_shared_ram if shared_gpu else require_inference_ram)(needed)
+                except (SharedGPUMemoryError, InferenceRAMError) as error:
+                    ram_failure = error
+                    continue
             mode = "CPU 相机估计" if target.type == "cpu" else "省显存相机估计" if compact else "相机估计"
             on_progress(f"{mode} · 采样 {samples}/{expected_len} 帧 · 间隔 {interval}")
             process = multiprocessing.get_context("spawn").Process(
@@ -220,6 +270,12 @@ def extract_vggt_camera_isolated(video_path, *, output_npz, frame_range, expecte
                 raise RuntimeError("相机计算没有产出有效结果。")
             os.replace(temporary, output_npz)
             return result
+    if ram_failure is not None:
+        raise ram_failure
+    if shared_gpu:
+        raise SharedCameraSamplingError(
+            "AMD 核显的 CPU 相机估计未能完成。请缩短处理区间、增大采样间隔，或改用固定机位。"
+        )
     if invalid_pose:
         raise RuntimeError("当前 GPU 的相机估计未得到有效结果。请改用自动采样或增大手动间隔，以便使用 CPU 重试。")
     raise RuntimeError("移动相机估计可用显存不足。请释放其他程序占用的显存，或使用自动采样、增大手动采样间隔。")
@@ -386,16 +442,10 @@ def _save_video_frames(
     max_frames: Optional[int] = None,
     frame_interval: int = 1,
 ) -> tuple[list[str], tuple[int, int], list[int]]:
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise ValueError(f"cannot open video: {video_path}")
-
     start, end = frame_range if frame_range is not None else (0, None)
     start = max(int(start), 0)
     if end is not None:
         end = int(end)
-    if start > 0:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start)
 
     frame_interval = max(1, int(frame_interval))
     os.makedirs(frame_dir, exist_ok=True)
@@ -403,6 +453,7 @@ def _save_video_frames(
     sample_indices: list[int] = []
     image_size_hw: tuple[int, int] | None = None
     frame_idx = start
+    cap = open_video_at_frame(video_path, start)
     try:
         while True:
             if end is not None and frame_idx > end:

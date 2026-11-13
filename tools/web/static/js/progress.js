@@ -49,6 +49,7 @@ const LEGACY = new Map(Object.entries({
   "Done": "job.done",
 }));
 const COUNTERS = [
+  [/^Detecting people: (\d+)\/(\d+) frames$/, "job.detection_frames"],
   [/^SAM: (\d+)\/(\d+) frames$/, "job.sam_frames"],
   [/^正在补提取手框 · (\d+) \/ (\d+) 帧$/, "job.hand_box_frames"],
   [/^HaMeR 手指精修 · (\d+) \/ (\d+) 帧$/, "job.hamer_frames"],
@@ -132,11 +133,13 @@ export function initProgress() {
     if (batch) {
       setText(node, () => [
         "SAM",
+        batch.backend === "hybrid" ? t("sam.backend_hybrid")
+          : batch.backend === "xpu" ? t("sam.backend_xpu") : batch.backend === "cpu" ? "CPU" : "",
         t(batch.reused ? "progress.sam_reused" : batch.requested == null ? "common.auto" : "common.manual"),
         (status === "done" || batch.reused) && batch.min_batch < batch.max_batch
           ? t("progress.sam_range", { min: batch.min_batch, max: batch.max_batch })
           : batch.actual == null ? t("progress.sam_unrecorded") : t("progress.sam_actual", { frames: batch.actual }),
-        !batch.reused && batch.total_mib ? t("progress.vram_free", {
+        !batch.reused && !batch.shared_memory && batch.total_mib ? t("progress.vram_free", {
           free: (Math.min(batch.free_mib, batch.driver_free_mib ?? Infinity) / 1024).toFixed(1),
           total: (batch.total_mib / 1024).toFixed(1),
         }) : "",

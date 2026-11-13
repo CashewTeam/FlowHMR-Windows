@@ -395,6 +395,9 @@ export function initPreviewCharacter(getActors, onChange, onRestoreError) {
     try {
       const choice = await pick.call(window.pywebview.api);
       if (version !== pickVersion || !dialog.open || !choice) return;
+      if (["character_picker_session", "character_picker_invalid", "character_picker_retry"].includes(choice.error_code)) {
+        throw appError(`server.${choice.error_code}`);
+      }
       const kind = typeof choice.name === "string" ? kindOf(choice.name) : null;
       if (!kind || typeof choice.ticket !== "string") throw appError("server.character_file");
       files = [];

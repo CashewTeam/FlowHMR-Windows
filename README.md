@@ -6,24 +6,35 @@
 
 **[下载 Windows 便携版](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [查看发布说明](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR 论文](https://arxiv.org/abs/2610.03691)
 
-## v0.3.4 更新
+## v0.3.5 更新
 
-修复低显存模式下多人动作已生成、却在对齐站位时出现 `Expected a cuda device, but got: cpu` 的问题。**主要面向显存 8 GB 及以下的用户；未遇到问题的用户可以暂留 v0.3.3。** 更新后，已有任务可在历史里点 **对齐场景**，无需重跑动作。
+- **纯 CPU 推理（实验）。** Intel 和 AMD x64 处理器无需 GPU 即可使用固定机位或运动相机。此模式暂不支持 HaMeR 手指精修。
+- **新增 GPU 运行环境。** 精简 CUDA 推荐，按显卡匹配 AMD ROCm 下载，加入部分 AMD 核显、RX 5000 和 Intel Arc 的实验环境。符合条件的 AMD 核显可把 SAM 图像编码交给 CPU，降低显存开销。
+- **人物检测只扫描选定区间。** 更改起止帧后会重新检测，预览和多人对齐仍使用原素材帧号。
+- **修复系统代理下的角色选择。** PMX、VRM 和 FBX 文件选择后的请求直连本机，避免被系统代理拦截（[Issue #7](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/issues/7)）。
 
-[本次发布说明](docs/release-windows.md) · [v0.3.3 更新：SAM 自动批次与本机 MCP](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.3)
+[本次发布说明](docs/release-windows.md) · [v0.3.4：低显存多人对齐修复](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.4)
 
 ## 最低配置与支持设备
 
 | 项目 | 最低配置 | 推荐配置 |
 | --- | --- | --- |
-| 系统 | 64 位 Windows 10 / 11 | 64 位 Windows 11 |
+| 系统 | 64 位 Windows 10 / 11 | 64 位 Windows 11（ROCm 和 Intel XPU 需要） |
 | 内存 | 16 GB | 32 GB 或以上 |
-| 显存 | 6 GB | 8 GB 或以上 |
+| 独显显存（CUDA / ROCm） | 6 GB（已验证可运行） | 8 GB 或以上 |
 
-| 设备 | 支持方式 |
-| --- | --- |
-| NVIDIA GeForce RTX 20 / 30 / 40 / 50 系列 | 在软件内启用匹配的 CUDA 环境；RTX 50 系列选 12.8 或 12.9。 |
-| AMD Radeon RX 9000 / 7000 系列 | 在 Windows 11 上配置与显卡匹配的 [ROCm 运行环境](docs/amd-rocm.md)。 |
+| 设备 | 运行环境 | 验证状态 |
+| --- | --- | --- |
+| NVIDIA GeForce RTX 50 系列 | CUDA 12.8 | 已验证 |
+| NVIDIA GeForce RTX 20 / 30 / 40 系列 | CUDA 12.1 | 实验中 |
+| NVIDIA GeForce GTX 10 系列 | CUDA 12.1 | 实验中 |
+| AMD Radeon RX 9000 / 7000 系列 | [ROCm](docs/amd-rocm.md) | 已验证 |
+| AMD Radeon RX 5000 系列 | [ROCm](docs/amd-rocm.md) | 实验中 |
+| AMD Radeon 核显（含 740M / 760M / 780M 及部分 800M） | [ROCm](docs/amd-rocm.md) | 实验中（9950X 核显已验证；建议固定机位） |
+| Intel Arc A / B 系列、部分 Core Ultra Arc 核显 | [Intel XPU](docs/windows.md) | 实验中（GPU 仅负责 SAM 图像编码） |
+| Intel / AMD x64 处理器 | [纯 CPU](docs/windows.md) | 已验证（AMD Ryzen 9 9950X）；Intel 实验中 |
+
+纯 CPU 和 Intel XPU 暂不支持 HaMeR 手指精修，SAM 自带的手部估计仍会执行。纯 CPU 或核显建议配备至少 32 GB 系统内存并先用短片试跑。
 
 ## Windows 桌面版
 
@@ -49,9 +60,11 @@
 ## 快速开始
 
 1. 在 64 位 Windows 10 / 11 上完整解压 `FlowHMR-Windows.zip`，进入解包后的 `FlowHMR` 文件夹，双击 `FlowHMR.exe`。基础包自带 Python、界面组件和 FBX 导出组件。
-2. 安装兼容的显卡驱动，再按上表配置 CUDA 或 ROCm 运行环境。
+2. 点右上角 **运行环境**，按上表下载并启用匹配的 CUDA、ROCm 或 Intel XPU 环境；也可选择 **CPU**。使用 GPU 时先安装兼容的显卡驱动。已经安装的 CUDA 12.6 / 12.9 环境可以继续使用。
 3. 打开 **模型**，点 **下载全部公开模型**，也可以逐项下载。公开模型会校验后放到 `models/`；SAM 3D Body 和 VGGT-Omega 由魔搭提供。不需要手指精修时，可以跳过 HaMeR。需要登录的官方模型按下表取得。
 4. 把视频拖进软件，选择要处理的人物和帧范围，再开始生成。完成后可先预览，再从菜单导出 FBX、VMD、VRMA 或 NPZ。
+
+已安装的便携版会在后台检查版本。也可以点击语言菜单旁的 **检查更新**，查看发布说明、手动导入更新包或选择历史版本。网络连不上 GitHub 时仍可正常使用本机版本。
 
 ### 官方模型该下载哪个？
 

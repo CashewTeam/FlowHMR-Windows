@@ -6,24 +6,35 @@
 
 **[Windows 포터블 버전 다운로드](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [릴리스 노트](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR 논문](https://arxiv.org/abs/2610.03691)
 
-## v0.3.4 변경 사항
+## v0.3.5 변경 사항
 
-저용량 VRAM 모드에서 여러 사람의 모션을 생성한 뒤 위치를 정렬할 때 `Expected a cuda device, but got: cpu` 오류가 발생하던 문제를 수정했습니다. **주로 VRAM 8 GB 이하인 환경을 위한 업데이트입니다. 문제가 없다면 v0.3.3을 계속 사용해도 됩니다.** 업데이트 후에는 작업 기록에서 기존 작업의 **장면 정렬**을 눌러 모션을 다시 생성하지 않고 재시도할 수 있습니다.
+- **CPU 전용 추론.** Intel 및 AMD x64 CPU에서 고정 카메라와 이동 카메라를 모두 사용할 수 있습니다. 이 모드에서는 HaMeR 손가락 보정을 지원하지 않습니다.
+- **GPU 지원 확대.** AMD 내장 GPU, Radeon RX 5000, Intel XPU용 실험 런타임을 추가했습니다. 호환되는 AMD 내장 GPU는 CPU와 SAM 처리를 나눠 GPU 메모리 사용량을 줄일 수 있습니다.
+- **선택한 구간만 인물 감지.** 시작 또는 끝 프레임을 바꾸면 새 범위를 다시 검사합니다. 미리보기와 다중 인물 위치 정렬에는 원본 동영상의 프레임 번호를 그대로 사용합니다.
+- **캐릭터 가져오기 오류 수정.** PMX, VRM, FBX를 선택하면 앱이 로컬 서비스에 직접 연결하므로 시스템 프록시가 요청을 가로막지 않습니다([Issue #7](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/issues/7)).
 
-[릴리스 노트](../release-windows.md) · [v0.3.3: SAM 배치 자동 조정과 로컬 MCP](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.3)
+[릴리스 노트](../release-windows.md) · [v0.3.4: 저용량 VRAM 환경의 다중 인물 위치 정렬 수정](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/tag/windows-v0.3.4)
 
-## 최소 사양 및 지원 GPU
+## 시스템 요구 사항 및 지원 장치
 
-| 항목 | 최소 사양 | 권장 사양 |
+| 항목 | 기준 사양 | 권장 사양 |
 | --- | --- | --- |
-| 운영체제 | 64비트 Windows 10 / 11 | 64비트 Windows 11 |
-| 메모리 | 16 GB | 32 GB 이상 |
-| VRAM | 6 GB | 8 GB 이상 |
+| 운영체제 | 64비트 Windows 10 / 11 | 64비트 Windows 11(ROCm 및 Intel XPU에 필요) |
+| 시스템 메모리 | 최소 16 GB | 32 GB 이상. CPU 전용 또는 내장 GPU에 특히 권장하며 긴 동영상에는 더 필요할 수 있습니다. |
+| VRAM(외장 GPU에만 해당) | 6 GB에서 동작 확인 | 8 GB 이상 |
 
-| GPU | 런타임 |
-| --- | --- |
-| NVIDIA GeForce RTX 20 / 30 / 40 / 50 | 앱에서 호환되는 CUDA 런타임을 활성화합니다. RTX 50 시리즈는 12.8 또는 12.9를 선택하세요. |
-| AMD Radeon RX 9000 / 7000 | Windows 11에서 GPU에 맞는 [ROCm 런타임](../amd-rocm.md)을 설정합니다. |
+| 장치 | 런타임 | 검증 상태 |
+| --- | --- | --- |
+| NVIDIA GeForce RTX 50 | CUDA 12.8 | 검증 완료 |
+| NVIDIA GeForce RTX 20 / 30 / 40 | CUDA 12.1 | 실험 중 |
+| NVIDIA GeForce GTX 10 | CUDA 12.1 | 실험 중 |
+| AMD Radeon RX 9000 / 7000 | [ROCm](../amd-rocm.md) | 검증 완료 |
+| AMD Radeon RX 5000 | [ROCm](../amd-rocm.md) | 실험 중 |
+| AMD Radeon 내장 GPU(740M / 760M / 780M 및 일부 800M 포함) | [ROCm](../amd-rocm.md) | 실험 중(9950X 내장 GPU 검증 완료, 고정 카메라 권장) |
+| Intel Arc A / B 및 일부 Core Ultra 내장 Arc GPU | [Intel XPU](../windows.md) | 실험 중(GPU는 SAM 이미지 인코딩만 담당) |
+| Intel / AMD x64 CPU | [CPU 전용](../windows.md) | 검증 완료(AMD Ryzen 9 9950X), Intel은 실험 중 |
+
+CPU 전용 모드와 Intel XPU는 아직 HaMeR 손가락 보정을 지원하지 않습니다. SAM의 기본 손 자세 추정은 그대로 실행됩니다.
 
 ## Windows 데스크톱 버전
 
@@ -49,9 +60,11 @@
 ## 빠른 시작
 
 1. 64비트 Windows 10 또는 11에서 `FlowHMR-Windows.zip` 전체를 압축 해제합니다. 압축을 푼 `FlowHMR` 폴더를 열고 `FlowHMR.exe`를 실행합니다. 기본 패키지에는 Python, 데스크톱 UI 및 FBX 내보내기 구성 요소가 포함됩니다.
-2. 호환되는 GPU 드라이버를 설치한 뒤 위 표에 따라 CUDA 또는 ROCm을 설정합니다.
+2. 오른쪽 위의 **런타임**을 열고 위 표를 참고해 장치에 맞는 환경을 다운로드하고 활성화합니다. GPU를 사용하려면 호환 드라이버를 설치하세요. **CPU**를 선택할 경우 별도 GPU 드라이버는 필요하지 않습니다.
 3. **모델**을 열어 **공개 모델 모두 다운로드**(下载全部公开模型)를 선택하거나 하나씩 다운로드합니다. 공개 모델은 검증 후 `models/`에 배치되며 SAM 3D Body와 VGGT-Omega는 ModelScope에서 받습니다. 손가락 보정이 필요 없다면 개별 다운로드에서 HaMeR를 건너뛸 수 있습니다. 로그인이 필요한 공식 모델은 아래 표를 참고하세요.
 4. 앱에 동영상을 끌어 놓고 인물과 프레임 범위를 선택해 생성을 시작합니다. 생성된 모션을 미리 본 뒤 메뉴에서 FBX, VMD, VRMA 또는 NPZ로 내보낼 수 있습니다.
+
+앱은 백그라운드에서 업데이트를 확인합니다. 언어 메뉴 옆의 **업데이트 확인**에서 변경 사항을 읽거나, 업데이트 ZIP을 직접 선택하거나, 이전 버전을 선택할 수 있습니다. GitHub에 연결할 수 없어도 현재 버전을 계속 사용할 수 있습니다.
 
 ### 어떤 공식 모델을 받아야 하나요?
 
