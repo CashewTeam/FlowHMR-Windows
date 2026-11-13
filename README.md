@@ -65,6 +65,7 @@ AMD 和 NVIDIA 使用同一个 `FlowHMR-Windows.zip` 和 `FlowHMR.exe`。在 Win
 
 - [Windows 使用、升级和源码构建说明](docs/windows.md) · [报告问题](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/issues/new)
 - [维护界面语言](docs/localization.md)
+- [MCP 服务使用说明](docs/mcp.md)
 - [FlowHMR 官方项目页](https://flowhmr.github.io/) · [上游推理与训练资料](https://github.com/flowhmr/flowhmr#readme) · [上游论文引用格式](https://github.com/flowhmr/flowhmr#citation)
 
 动作重建基于 Zhanke Wang 等人的 **FlowHMR: Physically Plausible Motion Capture from Video**。用于研究时请引用[原论文](https://arxiv.org/abs/2610.03691)。FlowHMR 源码采用 [Apache-2.0](LICENSE)；第三方组件和模型按各自的许可分发，详见发行包内的 `THIRD_PARTY_NOTICES.md` 和[上游模型卡](https://huggingface.co/fafsaf1/flowhmr-0.46B)。

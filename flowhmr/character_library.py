@@ -220,6 +220,28 @@ class CharacterLibrary:
                 defaults[slot] = {"actor": actor, "id": identifier, "offsets": offsets}
             self._write(state)
 
+    def update_pose(self, actor, slot, identifier, transform):
+        """Atomically patch the selected character without overwriting another selection."""
+        with self._lock:
+            state = _read_json(self._preferences)
+            record = state.get('actors', {}).get(actor)
+            if record is None:
+                default = state.get('defaults', {}).get(slot, {})
+                if default.get('id') == identifier and identifier is not None:
+                    record = {'id': identifier, 'poses': {identifier: default.get('offsets', {})}}
+                    state.setdefault('actors', {})[actor] = record
+            if record is None or record.get('id') != identifier:
+                raise ValueError('Selected character changed; query the actor before editing again')
+            if self._entry(identifier) is None:
+                raise FileNotFoundError('Character is not in the library')
+            offsets = _pose(transform(record.get('poses', {}).get(identifier, {})))
+            record.setdefault('poses', {})[identifier] = offsets
+            state.setdefault('presets', {})[identifier] = offsets
+            if state.get('defaults', {}).get(slot, {}).get('actor') == actor:
+                state['defaults'][slot] = {'actor': actor, 'id': identifier, 'offsets': offsets}
+            self._write(state)
+            return offsets
+
     def forget_actors(self, ids):
         if not ids:
             return

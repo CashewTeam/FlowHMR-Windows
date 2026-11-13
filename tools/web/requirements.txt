@@ -2,6 +2,7 @@
 #   pip install -r requirements.txt -r tools/web/requirements.txt
 #   pip install --no-build-isolation --no-deps -e third_party/YOLOX
 flask>=3.0
+mcp==1.28.0              # Python 3.10-compatible Streamable HTTP server and client
 imageio-ffmpeg>=0.5        # bundled ffmpeg (used when no system ffmpeg is on PATH)
 
 # person detection + tracking (YOLOX runtime deps; YOLOX itself is installed with --no-deps)

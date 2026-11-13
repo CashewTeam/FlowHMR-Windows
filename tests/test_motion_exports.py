@@ -100,7 +100,7 @@ class MotionExportsTest(unittest.TestCase):
             self.assertEqual((code, error["error_code"]), (400, "metahuman_export_options"))
             code, _, _, error = self.request("POST", base, data={"template": (BytesIO(b"content"), "avatar.pmx")})
             self.assertEqual((code, error["error_code"]), (400, "metahuman_template_required"))
-            with patch.object(server, "METAHUMAN_TEMPLATE_LIMIT", 7):
+            with patch.object(server, "FBX_TEMPLATE_LIMIT", 7):
                 code, _, _, error = self.request("POST", base, data={"template": (BytesIO(b"x" * 8), "body.fbx")})
             self.assertEqual((code, error["error_code"]), (413, "metahuman_template_size"))
 

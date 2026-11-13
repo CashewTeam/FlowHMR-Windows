@@ -383,3 +383,14 @@ body { display: flex; flex-direction: column; height: 100vh; }
   .topbar-actions { gap: 6px; }
   .model-info { max-width: 44vw; overflow: hidden; text-overflow: ellipsis; }
 }
+/* MCP connection settings use the existing model dialog shell. */
+.mcp-fields { display: grid; gap: 14px; margin: 20px 16px; }
+#mcpDialog > .model-hint { margin: 16px; }
+.mcp-fields > label:not(.mcp-reveal) { display: grid; grid-template-columns: 110px minmax(0, 1fr); align-items: center; gap: 12px; }
+.mcp-fields input { width: 100%; box-sizing: border-box; }
+.mcp-fields .mcp-reveal { display: flex; align-items: center; gap: 8px; }
+.mcp-reveal input { width: auto; }
+#mcpStatus { overflow-wrap: anywhere; }
+.mcp-activity-list { max-height: 180px; overflow: auto; font-size: 12px; overflow-wrap: anywhere; }
+.mcp-activity-item { padding: 6px 0; border-bottom: 1px solid var(--line); }
+#mcpActivityStatus { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

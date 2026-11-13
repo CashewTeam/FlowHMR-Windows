@@ -15,8 +15,11 @@ import { initModelDialog } from "./models.js";
 import { initRuntimeDialog } from "./runtime.js";
 import { initMotionExport } from "./motion-export.js";
 import { initUpdates } from "./update.js";
+import { initMcpDialog } from "./mcp.js";
+import { initUIEvents } from './ui-events.js';
 
 setupLocalization();
+initMcpDialog();
 const confirmWorkspaceReady = initUpdates();
 const themeOptions = $("themeOptions");
 const themeButtons = [...themeOptions.querySelectorAll("[data-theme-choice]")];
@@ -48,13 +51,13 @@ const bus = createBus();
 initLayout();
 let info = null;
 let currentJob = null;
-let pollTimer = null;
 let loadedResult = null;
 let paramsShownFor = null;
 let restoreParameterDraft = false;
 let submitting = false;
 let pollVersion = 0;
-let historyStamp = "";
+let currentRevision = null;
+let knownJobs = null;
 const ACTIVE = new Set(["queued", "running", "waiting_user", "cancel_requested"]);
 
 const upload = initUpload(bus);
@@ -70,9 +73,29 @@ const progress = initProgress();
 const person = initPersonSelect(bus);
 const preview = initPreview(bus);
 const viewer = initViewer(preview);
+window.addEventListener('flowhmr:server-update', event => {
+  if (event.detail.kind === 'viewer_command') {
+    const { request_id: token, command } = event.detail.data;
+    void (async () => {
+      const base = `/api/ui/viewer-command/${token}`;
+      const claim = await fetch(`${base}/claim`, { method: 'POST' });
+      if (!claim.ok) return;
+      const result = viewer.controlPlayback(command);
+      await fetch(`${base}/reply`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(result),
+      });
+    })();
+    return;
+  }
+  if (event.detail.kind !== 'snapshot_request') return;
+  const token = event.detail.data.request_id;
+  void fetch(`/api/ui/viewer-snapshot/${token}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(viewer.snapshot()),
+  });
+});
 const motionExport = initMotionExport(() => viewer.bodyVariant, viewer);
 const trim = initTrim({ ...preview, seek: viewer.seekSourceFrame });
-const history = initHistory({ onOpen: openJob, onRerun: rerun, onDeleted: clearDeletedJobs });
+const history = initHistory({ onOpen: openJob, onRerun: rerun, onDeleted: clearDeletedJobs, onUpdated: syncExternalJobs });
 const runtime = initRuntimeDialog();
 let params = null;
 
@@ -127,6 +150,7 @@ initialJob ??= jobs.find((job) => job.status === "done") ?? jobs[0];
 if (initialJob) void openJob(initialJob.id, true);
 syncSubmit();
 if (info) confirmWorkspaceReady();
+initUIEvents();
 
 // ------------------------------------------------------------------ wiring
 bus.on("file:selected", (file) => {
@@ -230,11 +254,10 @@ async function rerun(jobId, overrides = {}) {
 
 function resetJobView() {
   motionExport.clear();
-  clearTimeout(pollTimer);
   pollVersion++;
   currentJob = null;
-  historyStamp = "";
   loadedResult = null;
+  currentRevision = null;
   person.reset();
   preview.setTrack(null);
   viewer.clear();
@@ -258,6 +281,23 @@ function clearDeletedJobs(ids) {
 }
 
 // ------------------------------------------------------------------ job polling
+function revision(job) {
+  return JSON.stringify([job.id, job.status, job.progress, job.params, job.selected_person, job.person_count]);
+}
+
+function syncExternalJobs(jobs) {
+  const incoming = knownJobs && jobs.find((job) => job.source === 'mcp' && !knownJobs.has(job.id));
+  if (!knownJobs) knownJobs = new Set();
+  for (const job of jobs) knownJobs.add(job.id);
+  if (submitting || upload.getFile()) return;
+  if (incoming) {
+    void openJob(incoming.id);
+    return;
+  }
+  const selected = jobs.find((job) => job.id === currentJob);
+  if (selected && currentRevision !== null && revision(selected) !== currentRevision) void poll();
+}
+
 async function openJob(id, restoreDraft = false) {
   if (upload.getFile()) upload.clear();
   resetJobView();
@@ -272,7 +312,6 @@ async function openJob(id, restoreDraft = false) {
 }
 
 async function poll() {
-  clearTimeout(pollTimer);
   const id = currentJob;
   if (!id) return;
   const version = ++pollVersion;
@@ -282,11 +321,11 @@ async function poll() {
   } catch (e) {
     if (version === pollVersion) {
       setText($("modelInfo"), m("connection.reconnecting"));
-      pollTimer = setTimeout(poll, 2000);
     }
     return;
   }
   if (version !== pollVersion) return;
+  currentRevision = revision(job);
   renderModelStatus(job.models_loaded ?? info?.models_loaded ?? true, job.status === "running" && job.loading_models);
 
   progress.render(job);
@@ -309,12 +348,7 @@ async function poll() {
     trim.apply(job.params);
     paramsShownFor = id;
   }
-  const stamp = `${id}:${job.status}:${Math.floor(job.progress / 5)}`;
-  if (stamp !== historyStamp) { historyStamp = stamp; void history.refresh(); }
-
-  if (ACTIVE.has(job.status)) {
-    pollTimer = setTimeout(poll, job.status === "waiting_user" ? 1500 : 1000);
-  } else if (job.status === "done" && loadedResult !== id) {
+  if (job.status === "done" && loadedResult !== id) {
     loadedResult = id;
     params.suggestCorrectionHeight(job.correction);
     motionExport.setResult(id, job);

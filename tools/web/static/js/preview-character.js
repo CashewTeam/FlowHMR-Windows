@@ -21,6 +21,8 @@ export function initPreviewCharacter(getActors, onChange, onRestoreError) {
   let files = [], candidates = [], catalog = emptyLibrary(), catalogReady = false, catalogRead = null;
   let focused = null, operation = null, restoring = null, picking = false, pickVersion = 0, removing = null;
   const refs = new Map(), writes = new Map();
+  let remoteRead = null;
+  let remotePending = false;
 
   function currentActor() {
     const actors = getActors();
@@ -51,6 +53,7 @@ export function initPreviewCharacter(getActors, onChange, onRestoreError) {
     show(button, !!actor);
     show(model, candidates.length > 1);
     show(browse, !picker());
+    if (remotePending && !remoteRead && !busy && !writes.size) queueMicrotask(syncRemoteCharacters);
   }
   function status() {
     const actor = currentActor(), candidate = candidates[Number(model.value)];
@@ -185,7 +188,10 @@ export function initPreviewCharacter(getActors, onChange, onRestoreError) {
   function writeFor(actor, write) {
     const next = (writes.get(actor.id) ?? Promise.resolve()).catch(() => {}).then(write);
     writes.set(actor.id, next);
-    const clear = () => { if (writes.get(actor.id) === next) writes.delete(actor.id); };
+    const clear = () => {
+      if (writes.get(actor.id) === next) writes.delete(actor.id);
+      if (remotePending) void syncRemoteCharacters();
+    };
     next.then(clear, clear);
     return next;
   }
@@ -218,6 +224,58 @@ export function initPreviewCharacter(getActors, onChange, onRestoreError) {
       }
     }).catch((cause) => { if (actor.character === entry) onRestoreError(cause); });
   }
+
+  // MCP edits use the same server preferences as the GUI. Only synchronize
+  // idle actors; local pending edits keep ownership until their save completes.
+  const remoteSignatures = new Map();
+  async function syncRemoteCharacters() {
+    const actors = getActors();
+    if (!actors.length || remoteRead || operation || restoring || catalogRead || picking || writes.size) return;
+    remotePending = false;
+    const read = remoteRead = new AbortController();
+    try {
+      const next = await api.getCharacterLibrary(actors, read.signal);
+      read.signal.throwIfAborted();
+      if (actors.some((actor) => !getActors().includes(actor)) || operation || picking || writes.size) return;
+      catalog = next;
+      if (dialog.open) { renderLibrary(librarySelect.value); sync(); }
+      for (const actor of actors) {
+        const saved = assignment(actor);
+        const signature = JSON.stringify(saved);
+        if (remoteSignatures.get(actor.id) === signature) continue;
+        if (saved.id && readStoredPose(editKey(actor, saved.id))) continue;
+        if (!saved.id) {
+          if (actor.character?.libraryId) attach(actor, null);
+        } else if (actor.character?.libraryId === saved.id) {
+          applyPose(actor.character, saved.offsets);
+          notifyChange();
+        } else {
+          const item = catalog.models.find((model) => model.id === saved.id);
+          if (!item) throw appError('server.character_library_missing');
+          const entry = await prepare(actor, { kind: item.kind, libraryId: item.id }, read.signal);
+          if (read.signal.aborted || !getActors().includes(actor) || operation || picking || writes.size) {
+            dispose(entry);
+            return;
+          }
+          applyPose(entry, saved.offsets);
+          attach(actor, entry);
+        }
+        remoteSignatures.set(actor.id, signature);
+      }
+    } catch (cause) {
+      if (!read.signal.aborted) onRestoreError(cause);
+    } finally {
+      if (remoteRead === read) remoteRead = null;
+      if (remotePending) void syncRemoteCharacters();
+    }
+  }
+  window.addEventListener('flowhmr:server-update', event => {
+    if (['characters', 'resync'].includes(event.detail.kind)) {
+      remotePending = true;
+      void syncRemoteCharacters();
+    }
+  });
+  window.addEventListener('pagehide', () => remoteRead?.abort());
 
   async function open() {
     if (dialog.open || !currentActor()) return;
@@ -444,6 +502,8 @@ export function initPreviewCharacter(getActors, onChange, onRestoreError) {
     get focused() { return currentActor(); },
     get active() { return currentActor()?.character?.asset ?? getActors().find((actor) => actor.character)?.character.asset; },
     releaseActors(actors) {
+      remoteRead?.abort();
+      remoteSignatures.clear();
       operation?.abort();
       restoring?.abort();
       catalogRead?.abort();

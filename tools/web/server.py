@@ -35,7 +35,8 @@ from urllib.parse import urlsplit
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 import numpy as np
-from flask import Flask, abort, jsonify, request, send_file, send_from_directory
+from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory
+from werkzeug.serving import make_server
 
 WEB_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(WEB_DIR))
@@ -59,6 +60,12 @@ from flowhmr.model_inventory import model_inventory
 from flowhmr.model_downloads import ACTIVE_DOWNLOAD, DownloadError, ModelDownloads, missing_downloads
 from flowhmr.runtime_environments import RUNTIME
 from flowhmr import runtime_rocm
+from flowhmr.mcp.service import MCPService
+from flowhmr.mcp.contract import Parameters as MCPParameters, ExportOptions as MCPExportOptions
+from flowhmr.mcp.characters import BONES, PosePatch, empty_pose, import_character
+from flowhmr.mcp.activity import Activity
+from flowhmr.mcp.events import UIEvents
+from flowhmr.mcp.contract import TOOL_NAMES
 
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 STAGES = [
@@ -74,6 +81,148 @@ SUB = "input"  # every job stores its upload as input.<ext>, so intermediates li
 
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024
+MCP_SERVICE = MCPService(REPO_ROOT)
+MCP_ACTIVITY = Activity()
+UI_EVENTS = UIEvents()
+MCP_SERVICE.on_change = lambda: UI_EVENTS.publish('mcp_service')
+
+
+@app.after_request
+def notify_ui_changes(response):
+    if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') and response.status_code < 300:
+        path = request.path
+        if path == '/api/upload' or path.startswith('/api/jobs'):
+            UI_EVENTS.publish('jobs')
+        elif path.startswith('/api/character-library') or path.startswith('/api/mcp/characters') or (
+                path.startswith('/api/mcp/jobs/') and path.endswith('/character')):
+            UI_EVENTS.publish('characters')
+        elif path == '/api/mcp':
+            UI_EVENTS.publish('mcp_service')
+    return response
+
+
+@app.get('/api/ui/events')
+def api_ui_events():
+    if not local_model_request() or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+        abort(403)
+    try:
+        cursor = int(request.headers.get('Last-Event-ID', UI_EVENTS.sequence))
+        if cursor < 0:
+            raise ValueError()
+    except ValueError:
+        abort(400)
+
+    def stream():
+        nonlocal cursor
+        yield 'event: connected\ndata: {}\n\n'
+        while True:
+            events = UI_EVENTS.wait(cursor)
+            if not events:
+                yield ': heartbeat\n\n'
+            for event in events:
+                cursor = event['id']
+                yield f"id: {cursor}\nevent: update\ndata: {json.dumps(event)}\n\n"
+    return Response(stream(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@app.post('/api/mcp/events')
+def api_mcp_events():
+    if not local_model_request() or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+        abort(403)
+    value = request.get_json()
+    if not isinstance(value, dict) or value.get('kind') != 'exports':
+        abort(400)
+    UI_EVENTS.publish('exports')
+    return jsonify(ok=True)
+
+
+@app.get('/api/mcp/viewer-snapshot')
+def api_mcp_viewer_snapshot():
+    check_character_library_request()
+    snapshot = UI_EVENTS.request_snapshot()
+    if snapshot is None:
+        return api_error('viewer_unavailable', 'No connected UI responded to the snapshot request.', 503)
+    return jsonify(snapshot)
+
+
+@app.post('/api/mcp/viewer-command')
+def api_mcp_viewer_command():
+    check_character_library_request()
+    value = request.get_json()
+    if (not isinstance(value, dict) or set(value) != {'job_id', 'action', 'frame'}
+            or not isinstance(value['job_id'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', value['job_id'])
+            or value['action'] not in ('seek', 'play', 'pause')
+            or (value['action'] == 'seek' and (type(value['frame']) is not int or value['frame'] < 0))
+            or (value['action'] != 'seek' and value['frame'] is not None)):
+        return api_error('invalid_playback_command', 'Invalid playback command.', 400)
+    result = UI_EVENTS.request_command(value)
+    if result is None:
+        return api_error('outcome_unknown', 'No UI acknowledged the command; inspect the viewer before retrying.', 504)
+    if 'error' in result:
+        return api_error('viewer_command_rejected', result['error'], 409)
+    return jsonify(result)
+
+
+@app.post('/api/ui/viewer-command/<token>/<operation>')
+def api_ui_viewer_command(token, operation):
+    check_character_library_request()
+    if not re.fullmatch(r'[0-9a-f]{32}', token):
+        abort(400)
+    if operation == 'claim':
+        accepted = UI_EVENTS.claim_command(token)
+    elif operation == 'reply':
+        value = request.get_json()
+        if not isinstance(value, dict):
+            abort(400)
+        accepted = UI_EVENTS.reply_command(token, value)
+    else:
+        abort(404)
+    if not accepted:
+        return api_error('viewer_command_expired', 'Command is already claimed or no longer pending.', 410)
+    return jsonify(ok=True)
+
+
+@app.post('/api/ui/viewer-snapshot/<token>')
+def api_ui_viewer_snapshot_reply(token):
+    if not local_model_request() or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+        abort(403)
+    if request.content_length and request.content_length > 2 * 1024 * 1024:
+        abort(413)
+    snapshot = request.get_json()
+    if not isinstance(snapshot, dict) or not re.fullmatch(r'[0-9a-f]{32}', token):
+        abort(400)
+    if not UI_EVENTS.reply_snapshot(token, snapshot):
+        return api_error('snapshot_expired', 'Snapshot request is no longer pending.', 410)
+    return jsonify(ok=True)
+
+
+@app.route('/api/mcp/activity', methods=['GET', 'POST'])
+def api_mcp_activity():
+    if not local_model_request() or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+        abort(403)
+    if request.method == 'GET':
+        directory = Path(REPO_ROOT) / '.cache/mcp/exports'
+        files = sorted(directory.glob('*.json'), key=lambda path: path.stat().st_mtime, reverse=True)[:20]
+        exports = [json.loads(path.read_text('utf-8')) for path in files]
+        for row in exports:
+            row.pop('temporary_path', None)
+        return jsonify(operations=MCP_ACTIVITY.snapshot(), exports=exports)
+    if request.content_length and request.content_length > 16384:
+        abort(413)
+    value = request.get_json()
+    if (not isinstance(value, dict) or value.get('tool') not in TOOL_NAMES
+            or value.get('state') not in ('running', 'done', 'failed')):
+        abort(400)
+    try:
+        row = MCP_ACTIVITY.record(value)
+        UI_EVENTS.publish('activity')
+        if row['state'] == 'done' and row['tool'] in (
+                'flowhmr_import_character', 'flowhmr_select_character', 'flowhmr_update_character_pose'):
+            UI_EVENTS.publish('characters')
+        return jsonify(row)
+    except ValueError as error:
+        return api_error('mcp_activity_invalid', str(error), 400)
 
 # On Windows, Python's mimetypes resolves extensions through the registry, so a
 # machine whose HKCR\.js "Content Type" is text/plain makes every .js file we
@@ -377,6 +526,8 @@ def _write_job(job, directory):
 
 def _persist_job_locked(job):
     _write_job(job, job_dir(job["id"]))
+    if job.get('ext') and os.path.isfile(os.path.join(job_dir(job['id']), f"input{job['ext']}")):
+        UI_EVENTS.publish('jobs', {'job_id': job.get('person_batch') or job['id']})
 
 
 def _legacy_job(job_id, directory):
@@ -510,6 +661,7 @@ def _build_job(filename, params, ext):
     job = {
         "id": job_id, "filename": filename, "params": params, "ext": ext, "recovered": False,
         "status": "queued", "message": "Waiting in queue", "error": None, "progress": 0,
+        "source": "desktop", "selection_policy": "legacy",
         "created": time.time(), "started": None, "finished": None,
         "num_frames": None, "fps": 30, "has_fbx": False,
         "candidates": None, "default_person": None, "selected_person": None, "selection_auto": False,
@@ -523,8 +675,9 @@ def _build_job(filename, params, ext):
     return job
 
 
-def new_job(filename, params, ext):
+def new_job(filename, params, ext, **metadata):
     job = _build_job(filename, params, ext)
+    job.update(metadata)
     os.makedirs(job_dir(job["id"]), exist_ok=True)
     with JOBS_LOCK:
         JOBS[job["id"]] = job
@@ -544,6 +697,7 @@ def input_video(job_id):
 
 def enqueue(job):
     JOB_QUEUE.put(job["id"])
+    UI_EVENTS.publish('jobs', {'job_id': job.get('person_batch') or job['id']})
 
 
 def worker_loop():
@@ -659,6 +813,8 @@ def _confirm_people(job_id, result, candidates, people, *, automatic):
             candidate = candidates[i]
             child = _build_job(filename, params.copy(), ext)
             child.update(_selected_track(candidate), person_batch=job_id,
+                         source=parent.get('source', 'desktop'),
+                         selection_policy=parent.get('selection_policy', 'legacy'),
                          video_size=[result.width, result.height], source_frames=result.total_frames,
                          body_reference=reference)
             child_stage = os.path.join(staging, child["id"])
@@ -869,6 +1025,9 @@ def run_job(job_id):
                 )
                 stage["status"] = "running"
                 SELECTIONS.pop(job_id, None)
+        _raise_if_cancelled(job_id)
+        if people is None and JOBS[job_id].get('selection_policy') == 'explicit':
+            raise UserMessage('等待人物选择已超时，请重跑任务并重新选择。', 'selection_timeout')
         chosen = people or [default_idx]
         _confirm_people(job_id, result, candidates, chosen, automatic=people is None)
         return chosen[0]
@@ -1071,8 +1230,182 @@ def api_error(error_code, message, status, **params):
     return jsonify(error=message, error_code=error_code, error_params=params), status
 
 
+@app.get('/api/mcp/parameters')
+def api_mcp_parameters():
+    if not local_model_request():
+        abort(403)
+    defaults = {k: v for k, v in default_params().items() if k not in ('manual_select', 'sole_fit')}
+    return jsonify(parameters=MCPParameters.model_json_schema(), defaults=defaults,
+                   export_options=MCPExportOptions.model_json_schema(),
+                   frame_timeline='Zero-based normalized 30 FPS video; end_frame is inclusive.',
+                   parameter_application='Import uses defaults; rerun inherits omitted parameters and creates a new job.')
+
+
+def submission_metadata(values, params):
+    if values.get('source') != 'mcp':
+        return {'source': 'desktop', 'selection_policy': 'legacy'}
+    if not local_model_request():
+        raise UserMessage('MCP submission must originate locally.', 'mcp_local_only')
+    policy = values.get('selection_policy', 'explicit')
+    if policy not in ('explicit', 'automatic'):
+        raise UserMessage('Invalid selection policy.', 'param_selection_policy')
+    params['manual_select'] = policy == 'explicit'
+    return {'source': 'mcp', 'selection_policy': policy}
+
+
+@app.route('/api/mcp', methods=['GET', 'POST'])
+def api_mcp():
+    if not local_model_request() or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+        abort(403)
+    try:
+        if request.method == 'GET':
+            return jsonify(MCP_SERVICE.snapshot())
+        body = request.get_json()
+        if not isinstance(body, dict):
+            raise ValueError('Expected a JSON object.')
+        action = body.get('action')
+        if set(body) - {'action', 'port', 'auth_enabled', 'auto_start'}:
+            raise ValueError('Unknown MCP configuration field.')
+        if action == 'start':
+            return jsonify(MCP_SERVICE.start(body.get('port'), f'http://127.0.0.1:{ARGS.port}'))
+        if action == 'stop':
+            MCP_SERVICE.stop()
+            return jsonify(MCP_SERVICE.snapshot())
+        if action == 'reset_token':
+            return jsonify(MCP_SERVICE.reset_token())
+        if action == 'configure_auth':
+            return jsonify(MCP_SERVICE.configure_auth(body.get('auth_enabled')))
+        if action == 'configure_auto_start':
+            return jsonify(MCP_SERVICE.configure_auto_start(body.get('auto_start')))
+        if action == 'test':
+            return jsonify(MCP_SERVICE.test_connection())
+        raise ValueError('Unknown MCP action.')
+    except Exception as error:
+        app.logger.exception('MCP management failed')
+        return api_error('mcp_failed', str(error), 400)
+
+
 CHARACTER_FILES = CharacterFiles()
 CHARACTER_LIBRARY = CharacterLibrary(MODEL_ROOT / "characters")
+
+
+def mcp_character_actor(job_id, person_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None:
+            abort(404)
+        members = _batch_members_locked(job_id)
+        if len(members) > 1:
+            if type(person_id) is not int:
+                raise ValueError('Multi-person scenes require person_id from flowhmr_get_job')
+            matches = [member for member in members if member.get('selected_person') == person_id - 1]
+            if not matches:
+                raise ValueError('Unknown scene person_id')
+            actor = matches[0]
+            slot = str(person_id)
+        else:
+            actor, slot = job, 'single'
+            if person_id is not None and (type(person_id) is not int or person_id != job.get('selected_person')):
+                raise ValueError('Unknown result person_id')
+        if actor['status'] != 'done':
+            raise ValueError('Character settings require a completed actor result')
+        return actor['id'], slot
+
+
+@app.get('/api/mcp/jobs/<job_id>/keyframes')
+def api_mcp_motion_keyframes(job_id):
+    check_character_library_request()
+    try:
+        person = request.args.get('person', type=int)
+        start = request.args.get('start_frame', default=0, type=int)
+        count = request.args.get('count', default=1, type=int)
+        if (('person' in request.args and person is None) or start is None or count is None
+                or start < 0 or not 1 <= count <= 120):
+            raise ValueError('Invalid person, start_frame or count')
+        actor, _ = mcp_character_actor(job_id, person)
+        from flowhmr.mcp.joint_names import SMPLH_JOINT_NAMES_52
+        with np.load(os.path.join(job_dir(actor), 'motion.npz'), allow_pickle=False) as motion:
+            poses = np.asarray(motion['poses'])
+            trans = np.asarray(motion['trans'])
+            if poses.ndim == 2 and poses.shape[1] == 156:
+                poses = poses.reshape(-1, 52, 3)
+            if poses.ndim != 3 or poses.shape[1:] != (52, 3) or trans.shape != (len(poses), 3):
+                raise ValueError('Unsupported source motion shape')
+            if start >= len(poses) or start + count > len(poses):
+                raise ValueError('Requested frame range exceeds motion length')
+            fps = float(np.asarray(motion['mocap_framerate']).item())
+            frames = [{'frame': i, 'time_seconds': i / fps, 'root_translation': trans[i].tolist(),
+                       'rotations_axis_angle': poses[i].tolist()} for i in range(start, start + count)]
+        return jsonify(job_id=job_id, actor_id=actor, person_id=person, frame_count=len(poses), fps=fps,
+                       skeleton='SMPL-H', joints=[{'index': i, 'name': name} for i, name in enumerate(SMPLH_JOINT_NAMES_52)],
+                       rotation_units='radians, axis-angle; local joint rotations', translation_units='metres',
+                       keyframe_type='dense source motion samples', frames=frames)
+    except (ValueError, KeyError, OSError) as error:
+        return api_error('motion_keyframes_invalid', str(error), 400)
+
+
+@app.post('/api/mcp/characters/import')
+def api_mcp_import_character():
+    check_character_library_request()
+    value = request.get_json()
+    if not isinstance(value, dict) or set(value) - {'file', 'name'}:
+        abort(400)
+    try:
+        return jsonify(import_character(CHARACTER_LIBRARY, CHARACTER_FILES, value.get('file'), value.get('name')))
+    except (OSError, ValueError, RuntimeError) as error:
+        return api_error('character_import_failed', str(error), 400)
+
+
+@app.route('/api/mcp/jobs/<job_id>/character', methods=['GET', 'POST', 'PATCH'])
+def api_mcp_character(job_id):
+    check_character_library_request()
+    try:
+        value = request.get_json() if request.method != 'GET' else {}
+        if not isinstance(value, dict):
+            raise ValueError('Expected an object')
+        person = request.args.get('person', type=int) if request.method == 'GET' else value.get('person_id')
+        if request.method == 'GET' and 'person' in request.args and person is None:
+            raise ValueError('person must be an integer')
+        actor, slot = mcp_character_actor(job_id, person)
+        catalog = CHARACTER_LIBRARY.snapshot([actor])
+        if request.method == 'POST':
+            if set(value) - {'person_id', 'character_id'} or 'character_id' not in value:
+                raise ValueError('Expected character_id and optional person_id')
+            identifier = value['character_id']
+            models = {item['id']: item for item in catalog['models']}
+            if identifier is not None and identifier not in models:
+                raise ValueError('Character is not in the library')
+            saved = catalog['actors'].get(actor, {}).get('poses', {}).get(identifier)
+            pose = saved if saved is not None else catalog['presets'].get(identifier)
+            if pose is None:
+                pose = empty_pose(models[identifier]['kind']) if identifier else None
+            CHARACTER_LIBRARY.set_actor(actor, slot, identifier, pose, select=True)
+        elif request.method == 'PATCH':
+            if set(value) - {'person_id', 'character_id', 'patch'}:
+                raise ValueError('Unknown pose setting')
+            patch = PosePatch.model_validate(value.get('patch'))
+            if patch.ik_mode == 'ik':
+                kind = next((item['kind'] for item in catalog['models'] if item['id'] == value.get('character_id')), None)
+                if kind != 'pmx':
+                    raise ValueError('Native IK mode requires a compatible PMX character')
+            CHARACTER_LIBRARY.update_pose(actor, slot, value.get('character_id'), patch.patch)
+        catalog = CHARACTER_LIBRARY.snapshot([actor])
+        record = catalog['actors'].get(actor)
+        inherited = record is None
+        if inherited:
+            default = catalog['defaults'].get(slot, {})
+            record = {'id': default.get('id'), 'poses': {default.get('id'): default.get('offsets')}}
+        identifier = record.get('id')
+        return jsonify(actor_id=actor, person_id=person, character_id=identifier,
+            assignment_source='default' if inherited and identifier else 'actor' if not inherited else 'none',
+            pose=record.get('poses', {}).get(identifier), bones=BONES,
+            patch_schema=PosePatch.model_json_schema(),
+            scope='Preview offsets only; original motion and generic MCP exports remain unchanged.',
+            rotation_units='degrees; XYZ in the retarget rig bind axes', translation_units='metres',
+            finger_controls='22-36 are shared hand controls, not raw target bone indices',
+            mirror='Editor preference only; provide both body joint rotations to edit both sides.')
+    except (OSError, ValueError, RuntimeError) as error:
+        return api_error('character_settings_failed', str(error), 400)
 
 
 def check_character_library_request():
@@ -1383,12 +1716,13 @@ def api_upload():
         return api_error("video_format", f"unsupported format {ext}; use {formats}", 400, ext=ext, formats=formats)
     try:
         params = parse_params(request.form)
+        metadata = submission_metadata(request.form, params)
     except UserMessage as e:
         return api_error(e.code, str(e), 400, **e.params)
-    job = new_job(f.filename, params, ext)
+    job = new_job(f.filename, params, ext, **metadata)
     f.save(input_video(job["id"]))
     enqueue(job)
-    return jsonify({"job_id": job["id"]})
+    return jsonify(job_id=job['id'], status='queued', params=params, selection_policy=job['selection_policy'])
 
 
 @app.route("/api/jobs/<job_id>/rerun", methods=["POST"])
@@ -1411,9 +1745,10 @@ def api_rerun(job_id):
         body = {**body, "manual_select": True, "reselect_person": True}
     try:
         params = parse_params(body, base=src["params"])
+        metadata = submission_metadata(body, params)
     except UserMessage as e:
         return api_error(e.code, str(e), 400, **e.params)
-    job = new_job(src["filename"], params, src["ext"])
+    job = new_job(src["filename"], params, src["ext"], **metadata)
     _link_video(input_video(job_id), input_video(job["id"]))
     old_thumbnail = os.path.join(job_dir(job_id), "thumbnail.jpg")
     if os.path.isfile(old_thumbnail):
@@ -1459,7 +1794,7 @@ def api_rerun(job_id):
             update_job(job["id"], selected_person=person, person_track=src.get("person_track"),
                        selection_auto=src.get("selection_auto", False))
     enqueue(job)
-    return jsonify({"job_id": job["id"]})
+    return jsonify(job_id=job['id'], status='queued', params=params, selection_policy=job['selection_policy'])
 
 
 @app.route("/api/jobs/<job_id>/cancel", methods=["POST"])
@@ -1600,7 +1935,7 @@ def api_jobs():
     except (ValueError, TypeError, binascii.Error, OverflowError):
         return api_error("history_invalid_page", "历史记录分页无效，请刷新后重试。", 400)
 
-    keys = ("id", "filename", "status", "progress", "created", "finished", "num_frames", "params", "recovered",
+    keys = ("id", "filename", "status", "progress", "created", "finished", "num_frames", "params", "recovered", "source", "selection_policy",
             "selected_person", "person_count", "person_done")
     with JOBS_LOCK:
         groups = defaultdict(list)
@@ -2208,7 +2543,24 @@ def main():
     INSPECTION = PreviewInspection()
     threading.Thread(target=worker_loop, daemon=True).start()
     print(f"\n  FlowHMR web demo ready:  http://{ARGS.host}:{ARGS.port}\n")
-    app.run(host=ARGS.host, port=ARGS.port, threaded=True, debug=False)
+    # Bind the backend first; failed binds must not launch an orphan MCP service.
+    server = make_server(ARGS.host, ARGS.port, app, threaded=True)
+
+    def start_mcp():
+        try:
+            MCP_SERVICE.start_if_configured(f'http://127.0.0.1:{server.server_port}')
+        except Exception as error:
+            MCP_SERVICE.startup_error = str(error)
+            app.logger.exception('MCP auto-start failed')
+        finally:
+            UI_EVENTS.publish('mcp_service')
+
+    threading.Thread(target=start_mcp, daemon=True).start()
+    try:
+        server.serve_forever()
+    finally:
+        MCP_SERVICE.stop()
+        server.server_close()
 
 
 if __name__ == "__main__":

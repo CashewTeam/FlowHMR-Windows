@@ -30,6 +30,7 @@
       <span class="workspace-tab" data-i18n="menu.layout">布局</span>
     </div>
     <div class="topbar-actions">
+      <button type="button" class="model-info model-button" id="btnMcp" aria-haspopup="dialog" aria-controls="mcpDialog" data-i18n-title="mcp.title">MCP</button>
       <select id="languageSelect" class="input language-select" aria-label="界面语言" data-i18n-label="menu.language" data-i18n-title="menu.language">
         <option value="zh-CN" lang="zh-CN">简体中文</option>
         <option value="zh-TW" lang="zh-TW">繁體中文</option>
@@ -478,7 +479,7 @@
   <div class="editor-splitter splitter-timeline" data-split="timeline" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="调整时间轴高度" title="拖动调整时间轴高度，双击恢复" data-i18n-label="layout.timeline" data-i18n-title="layout.timeline_hint"></div>
 </main>
 
-<footer class="workspace-status"><span id="viewControlHint" data-i18n="view.pan_status">左键平移 · 中键/右键旋转 · 滚轮缩放 · 空格播放</span><span id="workspaceState">FlowHMR</span></footer>
+<footer class="workspace-status"><span id="viewControlHint" data-i18n="view.pan_status">左键平移 · 中键/右键旋转 · 滚轮缩放 · 空格播放</span><span id="mcpActivityStatus" role="status"></span><span id="workspaceState">FlowHMR</span></footer>
 
 <dialog id="modelDialog" class="model-dialog" aria-labelledby="modelTitle">
   <header class="model-dialog-head">
@@ -553,6 +554,40 @@
       <button type="button" class="btn-secondary small" id="updateManual" data-i18n="update.manual" data-i18n-title="update.manual_hint">手动更新…</button>
       <button type="button" class="btn-secondary small hidden" id="updateStop" data-i18n="download.stop">停止下载</button>
       <button type="button" class="btn-primary small hidden" id="updateDownload" data-i18n="download.download">下载</button>
+    </div>
+  </footer>
+</dialog>
+
+<dialog id="mcpDialog" class="model-dialog" aria-labelledby="mcpTitle">
+  <header class="model-dialog-head">
+    <h3 id="mcpTitle" data-i18n="mcp.title">MCP 服务设置</h3>
+    <form method="dialog"><button type="submit" class="editor-icon" aria-label="关闭" title="关闭" data-i18n-label="common.close" data-i18n-title="common.close">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+    </button></form>
+  </header>
+  <p class="model-hint" data-i18n="mcp.hint">供本机 Agent 导入视频与角色、调整参数和骨骼偏移、查询任务和导出动作。</p>
+  <div class="mcp-fields">
+    <label class="mcp-reveal"><input type="checkbox" id="mcpAutoStart"><span data-i18n="mcp.auto_start">自动开启 MCP</span></label>
+    <p class="setting-help" data-i18n="mcp.auto_start_hint">软件启动后自动开启 MCP 服务。</p>
+    <label><span data-i18n="mcp.port">端口</span><input class="input" id="mcpPort" type="number" min="1024" max="65535" step="1" value="60551"></label>
+    <label><span data-i18n="mcp.url">连接地址</span><input class="input" id="mcpUrl" readonly></label>
+    <label class="mcp-reveal"><input type="checkbox" id="mcpAuth"><span data-i18n="mcp.auth">启用访问令牌</span></label>
+    <label id="mcpTokenRow" class="hidden"><span data-i18n="mcp.token">访问令牌</span><input class="input" id="mcpToken" type="password" readonly autocomplete="off"></label>
+    <label id="mcpRevealRow" class="mcp-reveal hidden"><input type="checkbox" id="mcpReveal"><span data-i18n="mcp.reveal">显示令牌</span></label>
+    <div class="model-actions">
+      <button type="button" class="btn-secondary small" id="mcpCopy" data-i18n="mcp.copy">复制连接配置</button>
+      <button type="button" class="btn-secondary small" id="mcpReset" data-i18n="mcp.reset">重置令牌</button>
+    </div>
+  </div>
+  <section class="mcp-fields">
+    <h4 data-i18n="mcp.activity">最近 MCP 操作与导出</h4>
+    <div id="mcpActivityList" class="mcp-activity-list" aria-live="polite"></div>
+  </section>
+  <footer class="model-dialog-foot">
+    <span id="mcpStatus" role="status" aria-live="polite"></span>
+    <div class="model-actions">
+      <button type="button" class="btn-secondary small" id="mcpTest" data-i18n="mcp.test">验证连接</button>
+      <button type="button" class="btn-primary small" id="mcpToggle" data-i18n="mcp.start">启动服务</button>
     </div>
   </footer>
 </dialog>
