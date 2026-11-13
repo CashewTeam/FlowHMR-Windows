@@ -1314,7 +1314,7 @@ def api_mcp_motion_keyframes(job_id):
                 or start < 0 or not 1 <= count <= 120):
             raise ValueError('Invalid person, start_frame or count')
         actor, _ = mcp_character_actor(job_id, person)
-        from flowhmr.core.bodymodels.joint_names import SMPLH_JOINT_NAMES_52
+        from flowhmr.mcp.joint_names import SMPLH_JOINT_NAMES_52
         with np.load(os.path.join(job_dir(actor), 'motion.npz'), allow_pickle=False) as motion:
             poses = np.asarray(motion['poses'])
             trans = np.asarray(motion['trans'])

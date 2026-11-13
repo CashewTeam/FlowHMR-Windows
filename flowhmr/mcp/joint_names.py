@@ -1,4 +1,4 @@
-"""Canonical SMPL-H source joint ordering."""
+"""SMPL-H joint ordering matching core/bodymodels/smpl_skeleton.py."""
 
 SMPLH_JOINT_NAMES_52 = [
     "pelvis",

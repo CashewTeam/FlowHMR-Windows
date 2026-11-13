@@ -1,5 +1,6 @@
 """Real MCP and Flask HTTP calls with GPU work held in the existing queue."""
 import asyncio
+import ast
 import importlib.util
 from pathlib import Path
 import socket
@@ -67,6 +68,14 @@ class ExportSafetyTest(unittest.TestCase):
 
 
 class WorkflowsTest(unittest.TestCase):
+    def test_source_joint_names_match_original_smplh_order(self):
+        from flowhmr.mcp.joint_names import SMPLH_JOINT_NAMES_52
+        source = (ROOT / 'flowhmr/core/bodymodels/smpl_skeleton.py').read_text(encoding='utf-8')
+        assignment = next(node for node in ast.parse(source).body if isinstance(node, ast.Assign)
+                          and any(isinstance(target, ast.Name) and target.id == 'SMPLH_JOINT_NAMES_52'
+                                  for target in node.targets))
+        self.assertEqual(SMPLH_JOINT_NAMES_52, ast.literal_eval(assignment.value))
+
     def test_playback_command_validation_claim_and_reply(self):
         events = UIEvents()
         responses = []
