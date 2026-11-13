@@ -2,6 +2,9 @@
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 
+SERVICE_KEY_ENV = 'FLOWHMR_MCP_SERVICE_KEY'
+SERVICE_KEY_HEADER = 'X-FlowHMR-MCP-Key'
+INSTANCE_ENV = 'FLOWHMR_MCP_INSTANCE'
 JobID = Annotated[str, Field(pattern=r'^[A-Za-z0-9_-]{1,64}$')]
 Index = Annotated[int, Field(strict=True, ge=0)]
 People = Annotated[list[Index], Field(min_length=1)]
@@ -26,7 +29,8 @@ class Parameters(BaseModel):
     auto_frames: bool = True
     static_camera: bool = True
     vggt_interval: int = Field(default=0, ge=0, le=120, description='0: automatic sampling.')
-    sam_chunk_size: int | None = Field(default=None, ge=1, description='null: automatic GPU batch sizing.')
+    sam_chunk_size: int | None = Field(default=None, ge=1, description='null: adjust batches to available VRAM and system memory.')
+    sam_hand_stride: Literal[1, 2, 4] = Field(default=1, description='SAM hand decoding interval in frames.')
     smoothing_frames: float = Field(default=0.12, ge=0, description='Gaussian smoothing sigma, in frames.')
     postprocess: bool = True
     correction_floor_m: float | None = Field(default=None, description='Ground height in metres; null: estimate.')
@@ -35,11 +39,11 @@ class Parameters(BaseModel):
     hamer: bool = False
     hamer_stride: Literal[1, 2, 3, 4] = 1
 
-    @field_validator('hamer_stride', mode='before')
+    @field_validator('sam_hand_stride', 'hamer_stride', mode='before')
     @classmethod
-    def integer_stride(cls, value):
+    def integer_stride(cls, value, info):
         if type(value) is not int:
-            raise ValueError('hamer_stride must be an integer')
+            raise ValueError(f'{info.field_name} must be an integer')
         return value
 
     @model_validator(mode='after')
@@ -47,6 +51,15 @@ class Parameters(BaseModel):
         if self.end_frame is not None and self.end_frame < self.start_frame:
             raise ValueError('end_frame must not precede start_frame')
         return self
+
+
+def parameter_defaults(defaults):
+    return {key: value for key, value in defaults.items() if key in Parameters.model_fields}
+
+
+def single_result_person_id(job):
+    selected = job.get('selected_person')
+    return selected if selected is not None else 0
 
 
 class ExportOptions(BaseModel):

@@ -6,11 +6,11 @@
 
 **[下载 Windows 便携版](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [查看发布说明](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR 论文](https://arxiv.org/abs/2610.03691)
 
-## v0.3.2 更新
+## v0.3.3 更新
 
-- **程序更新。** 每次启动在后台检查。有新版时会提示版本号和更新内容，确认下载后会在下次启动时安装。右上角也可手动检查、从官方 ZIP 更新或选择历史版本。更新服务连不上时可以继续使用软件。见[完整更新说明](docs/release-windows.md)。
-- **长视频。** 按选定区间内的实际人物轨迹处理，超过 5000 帧继续生成，并标为实验性。SAM 自动按当前可用显存选择批次，分配失败时降批重试。选人时可滚动候选列表，视频预览仍可见。
-- **导出。** 修正 MMD 的 VMD 播放节奏和通用 FBX 的参考姿势朝向。Mixamo 可选角色模板，Maya AdvancedSkeleton 可配合随包的 30 FPS 帧率助手使用。导出时可选保存路径，软件记住上次成功导出的目录。
+- **程序更新。** 已安装 v0.3.2 的用户，重新打开软件即可在后台检查 v0.3.3，也可点击右上角 **检查更新**。下载并校验后，下次启动会安装更新。模型、角色、运行环境、历史任务和设置会保留。
+- **SAM 自动批次。** 从实际推理测出显存用量，结合显存和系统内存余量逐批调整。内存不足时缩批重试，单帧仍无法运行时会提示原因。新增逐帧、每 2 帧和每 4 帧的 SAM 手部采样选项，使用 HaMeR 精修时可按需降低采样频率。
+- **本机 MCP 服务。** 可从桌面顶栏启动，让兼容客户端创建、查询和取消任务，控制预览和角色骨骼，并导出动作。修复自动选人的单人任务通过 MCP 导出时报错，以及远程 Web 页面无法自动刷新进度的问题。[MCP 使用说明](docs/mcp.md) · [完整更新说明](docs/release-windows.md)
 
 ## Windows 桌面版
 

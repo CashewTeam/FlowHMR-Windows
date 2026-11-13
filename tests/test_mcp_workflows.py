@@ -2,6 +2,7 @@
 import asyncio
 import ast
 import importlib.util
+import os
 from pathlib import Path
 import socket
 import struct
@@ -20,7 +21,7 @@ import uvicorn
 from werkzeug.serving import make_server
 from flowhmr.mcp.exports import Exports
 from flowhmr.mcp.backend import Backend
-from flowhmr.mcp.contract import ExportOptions
+from flowhmr.mcp.contract import ExportOptions, SERVICE_KEY_HEADER
 from flowhmr.mcp.events import UIEvents
 from flowhmr.character_library import CharacterLibrary
 from flowhmr.character_files import CharacterFiles
@@ -30,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('mcp_workflow_backend', ROOT / 'tools/web/server.py')
 web = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(web)
+SERVICE_HEADERS = {SERVICE_KEY_HEADER: web.MCP_SERVICE.service_key}
 
 
 class ExportSafetyTest(unittest.TestCase):
@@ -68,6 +70,19 @@ class ExportSafetyTest(unittest.TestCase):
 
 
 class WorkflowsTest(unittest.TestCase):
+    def test_http_routes_require_their_own_local_credentials(self):
+        with patch.dict(os.environ, {web.CHARACTER_KEY_ENV: 'desktop-test-key'}), web.app.test_client() as client:
+            desktop_headers = {'X-FlowHMR-Desktop-Key': 'desktop-test-key'}
+            self.assertEqual(client.get('/api/mcp', headers=SERVICE_HEADERS).status_code, 403)
+            self.assertEqual(client.get('/api/mcp/activity').status_code, 403)
+            self.assertEqual(client.get('/api/mcp', headers={**desktop_headers, 'Sec-Fetch-Site': 'cross-site'}).status_code, 403)
+            self.assertEqual(client.get('/api/mcp', headers=desktop_headers).headers['Cache-Control'], 'no-store')
+            self.assertEqual(client.get('/api/mcp/parameters', headers=desktop_headers).status_code, 403)
+            schema = client.get('/api/mcp/parameters', headers=SERVICE_HEADERS).get_json()
+            self.assertEqual(set(schema['defaults']), set(schema['parameters']['properties']))
+            self.assertEqual(schema['parameters']['properties']['sam_hand_stride']['enum'], [1, 2, 4])
+            self.assertEqual(client.post('/api/mcp/characters/import', json={}).status_code, 403)
+
     def test_source_joint_names_match_original_smplh_order(self):
         from flowhmr.mcp.joint_names import SMPLH_JOINT_NAMES_52
         source = (ROOT / 'flowhmr/core/bodymodels/smpl_skeleton.py').read_text(encoding='utf-8')
@@ -82,7 +97,7 @@ class WorkflowsTest(unittest.TestCase):
         with patch.object(web, 'UI_EVENTS', events):
             def send():
                 with web.app.test_client() as client:
-                    responses.append(client.post('/api/mcp/viewer-command', json={
+                    responses.append(client.post('/api/mcp/viewer-command', headers=SERVICE_HEADERS, json={
                         'job_id': 'job1', 'action': 'seek', 'frame': 5}))
             thread = threading.Thread(target=send)
             thread.start()
@@ -94,7 +109,7 @@ class WorkflowsTest(unittest.TestCase):
                 self.assertEqual(client.post(path + '/claim').status_code, 200)
                 self.assertEqual(client.post(path + '/claim').status_code, 410)
                 self.assertEqual(client.post(path + '/reply', json={'frame': 5}).status_code, 200)
-                self.assertEqual(client.post('/api/mcp/viewer-command', json={
+                self.assertEqual(client.post('/api/mcp/viewer-command', headers=SERVICE_HEADERS, json={
                     'job_id': 'job1', 'action': 'seek', 'frame': True}).status_code, 400)
             thread.join(2)
             self.assertEqual(responses[0].get_json()['frame'], 5)
@@ -123,13 +138,13 @@ class WorkflowsTest(unittest.TestCase):
             with patch.object(web, 'ARGS', SimpleNamespace(work_dir=directory)), \
                     patch.object(web, 'JOBS', {'job1': job}), patch.object(web, 'MEMBER_DIRS', {}), \
                     web.app.test_client() as client:
-                response = client.get('/api/mcp/jobs/job1/keyframes?start_frame=1&count=2')
+                response = client.get('/api/mcp/jobs/job1/keyframes?start_frame=1&count=2&person=0', headers=SERVICE_HEADERS)
                 self.assertEqual(response.status_code, 200)
                 result = response.get_json()
                 self.assertEqual(result['joints'][16], {'index': 16, 'name': 'left_shoulder'})
                 self.assertEqual(result['frames'][0]['rotations_axis_angle'][16], poses[1, 16].tolist())
                 self.assertEqual(result['frames'][1]['frame'], 2)
-                self.assertEqual(client.get('/api/mcp/jobs/job1/keyframes?start_frame=2&count=2').status_code, 400)
+                self.assertEqual(client.get('/api/mcp/jobs/job1/keyframes?start_frame=2&count=2', headers=SERVICE_HEADERS).status_code, 400)
 
     def test_sse_delivery_replay_and_origin_check(self):
         events = UIEvents()
@@ -172,7 +187,7 @@ class WorkflowsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             video = root / 'clip.mp4'
-            video.write_bytes(b'test-upload')
+            video.write_bytes(b'test-upload' * 2048)
             web.ARGS = SimpleNamespace(work_dir=directory, device='cuda', ckpt=None, model_cfg=None)
             web.JOBS = {}
             web.MEMBER_DIRS = {}
@@ -183,13 +198,14 @@ class WorkflowsTest(unittest.TestCase):
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
             app = mcp_module.create_app(f'http://127.0.0.1:{backend.server_port}', port,
-                                        export_directory=root / 'exports')
+                                        export_directory=root / 'exports', service_key=web.MCP_SERVICE.service_key)
             service = uvicorn.Server(uvicorn.Config(app, log_level='error'))
             thread = threading.Thread(target=service.run, kwargs={'sockets': [sock]}, daemon=True)
             with patch.object(web.RUNTIME, 'summary', return_value={'ready': True, 'pending_restart': False}), \
                     patch.object(web, 'enqueue') as enqueue, \
                     patch.object(web, 'CHARACTER_LIBRARY', CharacterLibrary(root / 'characters')), \
                     patch.object(web, 'CHARACTER_FILES', CharacterFiles()), \
+                    patch.dict(os.environ, {web.CHARACTER_KEY_ENV: 'desktop-test-key'}), \
                     patch.object(Exports, 'recover', autospec=True, side_effect=Exports.recover) as recovery:
                 thread.start()
                 try:
@@ -214,10 +230,13 @@ class WorkflowsTest(unittest.TestCase):
                                     self.assertIn('steps', schema['parameters']['properties'])
                                     await call('import_video', {'video_path': str(video), 'params': {'steps': 0}}, True)
                                     await call('import_video', {'video_path': str(video), 'typo': True}, True)
+                                    for invalid in (3, True, 2.0):
+                                        await call('import_video', {'video_path': str(video), 'params': {'sam_hand_stride': invalid}}, True)
                                     self.assertEqual(enqueue.call_count, 0)
-                                    created = await call('import_video', {'video_path': str(video), 'params': {'steps': 3}})
+                                    created = await call('import_video', {'video_path': str(video), 'params': {'steps': 3, 'sam_hand_stride': 2}})
                                     job_id = created['job_id']
                                     self.assertEqual(created['params']['steps'], 3)
+                                    self.assertEqual(created['params']['sam_hand_stride'], 2)
                                     self.assertEqual(created['selection_policy'], 'explicit')
                                     job = web.JOBS[job_id]
                                     self.assertEqual(job['source'], 'mcp')
@@ -237,7 +256,8 @@ class WorkflowsTest(unittest.TestCase):
                                     await call('select_people', {'job_id': job_id, 'candidate_indices': [0]})
                                     self.assertTrue(slot['event'].is_set())
                                     await call('select_people', {'job_id': job_id, 'candidate_indices': [0]}, True)
-                                    job.update(status='done', selected_person=0, candidates=None)
+                                    job.update(status='done', selected_person=None, candidates=None)
+                                    self.assertEqual((await call('get_job', {'job_id': job_id}))['person_ids'], [0])
                                     texture = root / '肌肤.png'
                                     texture.write_bytes(b'fake-texture')
                                     model = root / 'character.pmx'
@@ -271,9 +291,10 @@ class WorkflowsTest(unittest.TestCase):
                                         'patch': {'rotations': {'16':[0,0,0]}}}, True)
                                     motion = root / job_id / 'motion.npz'
                                     motion.write_bytes(b'npz-download-test')
-                                    rerun = await call('rerun_job', {'job_id': job_id, 'params': {'steps': 4}})
+                                    rerun = await call('rerun_job', {'job_id': job_id, 'params': {'steps': 4, 'sam_hand_stride': 4}})
                                     self.assertNotEqual(rerun['job_id'], job_id)
                                     self.assertEqual(rerun['params']['steps'], 4)
+                                    self.assertEqual(rerun['params']['sam_hand_stride'], 4)
                                     await call('cancel_job', {'job_id': rerun['job_id']})
                                     self.assertEqual(web.JOBS[rerun['job_id']]['status'], 'cancel_requested')
                                     target = root / 'output.npz'
@@ -304,7 +325,7 @@ class WorkflowsTest(unittest.TestCase):
                                     self.assertEqual(receipt['status'], 'failed')
                                     self.assertFalse(failed_target.exists())
                                     self.assertEqual(list(root.glob('.flowhmr-export-*.tmp')), [])
-                                    job.update(person_batch=job_id, scene_state='pending', progress=100)
+                                    job.update(person_batch=job_id, scene_state='pending', progress=100, selected_person=0)
                                     child = web.new_job('clip.mp4', job['params'], '.mp4',
                                         person_batch=job_id, source='mcp', status='done', selected_person=1)
                                     detail = await call('get_job', {'job_id': job_id})
@@ -323,7 +344,8 @@ class WorkflowsTest(unittest.TestCase):
                                     await call('get_character_pose', {'job_id': job_id}, True)
                                     async with httpx.AsyncClient(trust_env=False) as audit_client:
                                         audit = (await audit_client.get(
-                                            f'http://127.0.0.1:{backend.server_port}/api/mcp/activity')).json()
+                                            f'http://127.0.0.1:{backend.server_port}/api/mcp/activity',
+                                            headers={'X-FlowHMR-Desktop-Key': 'desktop-test-key'})).json()
                                     self.assertTrue(any(row['tool']=='flowhmr_import_video' and row['state']=='done'
                                                         for row in audit['operations']))
                                     self.assertTrue(any(row['tool']=='flowhmr_update_character_pose' and row['state']=='failed'

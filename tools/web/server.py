@@ -42,7 +42,7 @@ WEB_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(WEB_DIR))
 sys.path.insert(0, REPO_ROOT)
 
-from flowhmr.utils.runtime_capabilities import SOLE_FIT_REFERENCE_STRENGTH, native_correction_available
+from flowhmr.utils.runtime_capabilities import SAMMemoryError, SOLE_FIT_REFERENCE_STRENGTH, native_correction_available
 from flowhmr.utils.runtime_hamer import hamer_available, HAMER_STRIDES, MISSING_HAMER
 from flowhmr.utils.runtime_preview_inspection import PreviewInspection
 from flowhmr.utils.runtime_preview_thumbnail import ensure_thumbnail
@@ -61,11 +61,11 @@ from flowhmr.model_downloads import ACTIVE_DOWNLOAD, DownloadError, ModelDownloa
 from flowhmr.runtime_environments import RUNTIME
 from flowhmr import runtime_rocm
 from flowhmr.mcp.service import MCPService
-from flowhmr.mcp.contract import Parameters as MCPParameters, ExportOptions as MCPExportOptions
+from flowhmr.mcp.contract import (Parameters as MCPParameters, ExportOptions as MCPExportOptions,
+                                  SERVICE_KEY_HEADER, TOOL_NAMES, parameter_defaults, single_result_person_id)
 from flowhmr.mcp.characters import BONES, PosePatch, empty_pose, import_character
 from flowhmr.mcp.activity import Activity
 from flowhmr.mcp.events import UIEvents
-from flowhmr.mcp.contract import TOOL_NAMES
 
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 STAGES = [
@@ -89,6 +89,8 @@ MCP_SERVICE.on_change = lambda: UI_EVENTS.publish('mcp_service')
 
 @app.after_request
 def notify_ui_changes(response):
+    if request.path == '/api/mcp':
+        response.headers['Cache-Control'] = 'no-store'
     if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') and response.status_code < 300:
         path = request.path
         if path == '/api/upload' or path.startswith('/api/jobs'):
@@ -128,8 +130,7 @@ def api_ui_events():
 
 @app.post('/api/mcp/events')
 def api_mcp_events():
-    if not local_model_request() or request.headers.get('Sec-Fetch-Site') == 'cross-site':
-        abort(403)
+    require_mcp_service()
     value = request.get_json()
     if not isinstance(value, dict) or value.get('kind') != 'exports':
         abort(400)
@@ -139,7 +140,7 @@ def api_mcp_events():
 
 @app.get('/api/mcp/viewer-snapshot')
 def api_mcp_viewer_snapshot():
-    check_character_library_request()
+    require_mcp_service()
     snapshot = UI_EVENTS.request_snapshot()
     if snapshot is None:
         return api_error('viewer_unavailable', 'No connected UI responded to the snapshot request.', 503)
@@ -148,7 +149,7 @@ def api_mcp_viewer_snapshot():
 
 @app.post('/api/mcp/viewer-command')
 def api_mcp_viewer_command():
-    check_character_library_request()
+    require_mcp_service()
     value = request.get_json()
     if (not isinstance(value, dict) or set(value) != {'job_id', 'action', 'frame'}
             or not isinstance(value['job_id'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', value['job_id'])
@@ -199,17 +200,15 @@ def api_ui_viewer_snapshot_reply(token):
 
 @app.route('/api/mcp/activity', methods=['GET', 'POST'])
 def api_mcp_activity():
-    if not local_model_request() or request.headers.get('Sec-Fetch-Site') == 'cross-site':
-        abort(403)
     if request.method == 'GET':
+        require_desktop_session()
         directory = Path(REPO_ROOT) / '.cache/mcp/exports'
         files = sorted(directory.glob('*.json'), key=lambda path: path.stat().st_mtime, reverse=True)[:20]
         exports = [json.loads(path.read_text('utf-8')) for path in files]
         for row in exports:
             row.pop('temporary_path', None)
         return jsonify(operations=MCP_ACTIVITY.snapshot(), exports=exports)
-    if request.content_length and request.content_length > 16384:
-        abort(413)
+    require_mcp_service()
     value = request.get_json()
     if (not isinstance(value, dict) or value.get('tool') not in TOOL_NAMES
             or value.get('state') not in ('running', 'done', 'failed')):
@@ -730,7 +729,12 @@ def worker_loop():
                     if s["status"] == "running":
                         s["status"] = "cancelled" if cancelled else "failed"
                 detail = f"{type(e).__name__}: {e}"
-                code, params = (e.code, e.params) if isinstance(e, UserMessage) else ("job_failed", {"detail": detail})
+                if isinstance(e, UserMessage):
+                    code, params = e.code, e.params
+                elif isinstance(e, SAMMemoryError):
+                    code, params = f"sam_low_{e.resource}", {}
+                else:
+                    code, params = "job_failed", {"detail": detail}
                 job.update(status="cancelled" if cancelled else "failed",
                            error=None if cancelled else detail, error_code=None if cancelled else code,
                            error_params={} if cancelled else params,
@@ -1232,10 +1236,8 @@ def api_error(error_code, message, status, **params):
 
 @app.get('/api/mcp/parameters')
 def api_mcp_parameters():
-    if not local_model_request():
-        abort(403)
-    defaults = {k: v for k, v in default_params().items() if k not in ('manual_select', 'sole_fit')}
-    return jsonify(parameters=MCPParameters.model_json_schema(), defaults=defaults,
+    require_mcp_service()
+    return jsonify(parameters=MCPParameters.model_json_schema(), defaults=parameter_defaults(default_params()),
                    export_options=MCPExportOptions.model_json_schema(),
                    frame_timeline='Zero-based normalized 30 FPS video; end_frame is inclusive.',
                    parameter_application='Import uses defaults; rerun inherits omitted parameters and creates a new job.')
@@ -1244,8 +1246,7 @@ def api_mcp_parameters():
 def submission_metadata(values, params):
     if values.get('source') != 'mcp':
         return {'source': 'desktop', 'selection_policy': 'legacy'}
-    if not local_model_request():
-        raise UserMessage('MCP submission must originate locally.', 'mcp_local_only')
+    require_mcp_service(max_bytes=None)
     policy = values.get('selection_policy', 'explicit')
     if policy not in ('explicit', 'automatic'):
         raise UserMessage('Invalid selection policy.', 'param_selection_policy')
@@ -1255,8 +1256,7 @@ def submission_metadata(values, params):
 
 @app.route('/api/mcp', methods=['GET', 'POST'])
 def api_mcp():
-    if not local_model_request() or request.headers.get('Sec-Fetch-Site') == 'cross-site':
-        abort(403)
+    require_desktop_session()
     try:
         if request.method == 'GET':
             return jsonify(MCP_SERVICE.snapshot())
@@ -1305,7 +1305,7 @@ def mcp_character_actor(job_id, person_id):
             slot = str(person_id)
         else:
             actor, slot = job, 'single'
-            if person_id is not None and (type(person_id) is not int or person_id != job.get('selected_person')):
+            if person_id is not None and (type(person_id) is not int or person_id != single_result_person_id(job)):
                 raise ValueError('Unknown result person_id')
         if actor['status'] != 'done':
             raise ValueError('Character settings require a completed actor result')
@@ -1314,7 +1314,7 @@ def mcp_character_actor(job_id, person_id):
 
 @app.get('/api/mcp/jobs/<job_id>/keyframes')
 def api_mcp_motion_keyframes(job_id):
-    check_character_library_request()
+    require_mcp_service()
     try:
         person = request.args.get('person', type=int)
         start = request.args.get('start_frame', default=0, type=int)
@@ -1346,7 +1346,7 @@ def api_mcp_motion_keyframes(job_id):
 
 @app.post('/api/mcp/characters/import')
 def api_mcp_import_character():
-    check_character_library_request()
+    require_mcp_service()
     value = request.get_json()
     if not isinstance(value, dict) or set(value) - {'file', 'name'}:
         abort(400)
@@ -1358,7 +1358,7 @@ def api_mcp_import_character():
 
 @app.route('/api/mcp/jobs/<job_id>/character', methods=['GET', 'POST', 'PATCH'])
 def api_mcp_character(job_id):
-    check_character_library_request()
+    require_mcp_service()
     try:
         value = request.get_json() if request.method != 'GET' else {}
         if not isinstance(value, dict):
@@ -1412,6 +1412,16 @@ def check_character_library_request():
     if not local_model_request() or request.headers.get("Sec-Fetch-Site") == "cross-site":
         abort(403)
     if request.content_length and request.content_length > 16384:
+        abort(413)
+
+
+def require_mcp_service(max_bytes=16384):
+    if not local_model_request() or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+        abort(403)
+    supplied = request.headers.get(SERVICE_KEY_HEADER, '')
+    if not supplied.isascii() or not hmac.compare_digest(supplied, MCP_SERVICE.service_key):
+        abort(403)
+    if max_bytes is not None and request.content_length and request.content_length > max_bytes:
         abort(413)
 
 
@@ -1483,7 +1493,8 @@ def api_set_actor_character(actor_id):
 def require_desktop_session():
     key = os.environ.get(CHARACTER_KEY_ENV, "")
     supplied = request.headers.get("X-FlowHMR-Desktop-Key", "")
-    if (not local_model_request() or not key or not key.isascii() or not supplied.isascii()
+    if (not local_model_request() or request.headers.get('Sec-Fetch-Site') == 'cross-site'
+            or not key or not key.isascii() or not supplied.isascii()
             or not hmac.compare_digest(key, supplied)):
         abort(403)
 
@@ -1936,7 +1947,8 @@ def api_jobs():
         return api_error("history_invalid_page", "历史记录分页无效，请刷新后重试。", 400)
 
     keys = ("id", "filename", "status", "progress", "created", "finished", "num_frames", "params", "recovered", "source", "selection_policy",
-            "selected_person", "person_count", "person_done")
+            "selected_person", "person_count", "person_done", "message", "loading_models", "scene_state", "source_frames", "stages",
+            "sam_batch", "camera")
     with JOBS_LOCK:
         groups = defaultdict(list)
         for row in JOBS.values():

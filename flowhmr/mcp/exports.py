@@ -99,7 +99,6 @@ class Exports:
             self.save(row)
             await self.notify()
             params = []
-            # A single-person result does not accept a selection query.
             if options.person_ids:
                 params.extend(('person', str(person)) for person in options.person_ids)
             if options.format == 'fbx':

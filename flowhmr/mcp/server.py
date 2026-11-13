@@ -16,12 +16,14 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 from flowhmr.mcp.backend import Backend, fail
+from flowhmr.mcp.contract import INSTANCE_ENV, SERVICE_KEY_ENV, SERVICE_KEY_HEADER
 from flowhmr.mcp.exports import Exports
 from flowhmr.mcp.tools import build_tools
 
 
-def create_app(backend_url, port, token=None, export_directory=None, shutdown=None):
-    backend = Backend(backend_url)
+def create_app(backend_url, port, token=None, export_directory=None, shutdown=None, *,
+               service_key=None, instance=None):
+    backend = Backend(backend_url, service_key)
     exports = Exports(export_directory or Path(__file__).resolve().parents[2] / '.cache/mcp/exports', backend)
 
     mcp = FastMCP('flowhmr_mcp', stateless_http=True, json_response=True,
@@ -34,6 +36,10 @@ def create_app(backend_url, port, token=None, export_directory=None, shutdown=No
     @mcp.custom_route('/health', methods=['GET'])
     async def health(request):
         return JSONResponse({'pid': os.getpid()})
+
+    @mcp.custom_route('/ready', methods=['GET'])
+    async def ready(request):
+        return JSONResponse({'instance': instance})
 
     @mcp.custom_route('/shutdown', methods=['POST'])
     async def stop(request):
@@ -84,7 +90,13 @@ def create_app(backend_url, port, token=None, export_directory=None, shutdown=No
                             f'http://127.0.0.1:{port}', f'http://localhost:{port}')):
                     await JSONResponse({'error': 'Invalid Host or Origin'}, status_code=403)(scope, receive, send)
                     return
-                if token is not None and not hmac.compare_digest(
+                path = scope['path']
+                if path == '/shutdown' and service_key is not None:
+                    if not hmac.compare_digest(headers.get(SERVICE_KEY_HEADER.lower().encode(), b''),
+                                               service_key.encode()):
+                        await JSONResponse({'error': 'MCP service key required'}, status_code=403)(scope, receive, send)
+                        return
+                elif (path != '/ready' or instance is None) and token is not None and not hmac.compare_digest(
                         headers.get(b'authorization', b''), f'Bearer {token}'.encode()):
                     await JSONResponse({'error': 'Bearer token required'}, status_code=401)(scope, receive, send)
                     return
@@ -102,7 +114,8 @@ def main():
     args = parser.parse_args()
     token = ((Path(__file__).resolve().parents[2] / '.cache/mcp/token').read_text('ascii').strip()
              if args.auth_enabled else None)
-    app = create_app(args.backend_url, args.port, token, shutdown=lambda: setattr(server, 'should_exit', True))
+    app = create_app(args.backend_url, args.port, token, shutdown=lambda: setattr(server, 'should_exit', True),
+                     service_key=os.environ.get(SERVICE_KEY_ENV), instance=os.environ.get(INSTANCE_ENV))
     server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=args.port, access_log=False))
 
     async def run():

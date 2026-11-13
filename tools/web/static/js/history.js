@@ -14,6 +14,7 @@ export function initHistory({ onOpen, onRerun, onDeleted, onUpdated }) {
   const selected = new Set(), rows = new Map();
   let current = null, busy = null, refreshVersion = 0, refreshing = false, pendingRefresh = false;
   let deletable = 0, through = null, nextCursor = null, loadingMore = false;
+  let polling = true, timer = null;
 
   function updateActions() {
     $("historySelectedCount").textContent = selected.size;
@@ -123,12 +124,13 @@ export function initHistory({ onOpen, onRerun, onDeleted, onUpdated }) {
       if (list.children[i] !== entry.row) list.insertBefore(entry.row, list.children[i] ?? null);
     });
     updateActions();
-    onUpdated?.(jobs);
+    onUpdated?.(jobs, polling);
     return jobs;
   }
 
   async function refresh() {
     if (loadingMore || refreshing) { pendingRefresh = true; return; }
+    clearTimeout(timer);
     refreshing = true;
     const version = ++refreshVersion;
     try {
@@ -141,6 +143,7 @@ export function initHistory({ onOpen, onRerun, onDeleted, onUpdated }) {
     } finally {
       refreshing = false;
       if (pendingRefresh && !loadingMore) { pendingRefresh = false; void refresh(); }
+      else scheduleRefresh();
     }
   }
 
@@ -148,6 +151,7 @@ export function initHistory({ onOpen, onRerun, onDeleted, onUpdated }) {
     if (!nextCursor || loadingMore || busy !== null) return;
     setError("");
     loadingMore = true;
+    clearTimeout(timer);
     refreshVersion++;
     updateActions();
     try {
@@ -164,13 +168,28 @@ export function initHistory({ onOpen, onRerun, onDeleted, onUpdated }) {
       loadingMore = false;
       updateActions();
       if (pendingRefresh) { pendingRefresh = false; void refresh(); }
+      else scheduleRefresh();
     }
   }
 
   more.addEventListener("click", loadMore);
+  function scheduleRefresh() {
+    clearTimeout(timer);
+    if (polling && !refreshing && !loadingMore) timer = setTimeout(refresh, 2000);
+  }
   window.addEventListener('flowhmr:server-update', event => {
+    if (event.detail.kind === 'resync') {
+      polling = false;
+      clearTimeout(timer);
+    }
     if (['jobs', 'resync'].includes(event.detail.kind)) void refresh();
   });
+  window.addEventListener('flowhmr:sync-disconnected', () => {
+    if (polling) return;
+    polling = true;
+    scheduleRefresh();
+  });
+  window.addEventListener('pagehide', () => clearTimeout(timer));
   $("historyRefresh").addEventListener("click", refresh);
   deleteSelected.addEventListener("click", async () => {
     const ids = [...selected];

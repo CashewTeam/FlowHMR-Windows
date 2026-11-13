@@ -282,10 +282,12 @@ function clearDeletedJobs(ids) {
 
 // ------------------------------------------------------------------ job polling
 function revision(job) {
-  return JSON.stringify([job.id, job.status, job.progress, job.params, job.selected_person, job.person_count]);
+  return JSON.stringify([job.id, job.status, job.progress, job.params, job.selected_person ?? null,
+    job.person_count ?? null, job.message ?? null, job.loading_models ?? null, job.scene_state ?? null,
+    job.source_frames ?? null, job.stages ?? null, job.sam_batch ?? null, job.camera ?? null]);
 }
 
-function syncExternalJobs(jobs) {
+function syncExternalJobs(jobs, polling) {
   const incoming = knownJobs && jobs.find((job) => job.source === 'mcp' && !knownJobs.has(job.id));
   if (!knownJobs) knownJobs = new Set();
   for (const job of jobs) knownJobs.add(job.id);
@@ -295,7 +297,7 @@ function syncExternalJobs(jobs) {
     return;
   }
   const selected = jobs.find((job) => job.id === currentJob);
-  if (selected && currentRevision !== null && revision(selected) !== currentRevision) void poll();
+  if (selected && (revision(selected) !== currentRevision || (polling && ACTIVE.has(selected.status)))) void poll();
 }
 
 async function openJob(id, restoreDraft = false) {
@@ -320,6 +322,7 @@ async function poll() {
     job = await api.getJob(id);
   } catch (e) {
     if (version === pollVersion) {
+      currentRevision = null;
       setText($("modelInfo"), m("connection.reconnecting"));
     }
     return;

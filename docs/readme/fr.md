@@ -6,11 +6,11 @@
 
 **[Télécharger l’édition portable pour Windows](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [Notes de version](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [Article FlowHMR](https://arxiv.org/abs/2610.03691)
 
-## Nouveautés de la v0.3.2
+## Nouveautés de la v0.3.3
 
-- **Mises à jour.** À chaque démarrage, l’application vérifie en arrière-plan si une nouvelle version est disponible et affiche son numéro et ses nouveautés. Si vous choisissez de la télécharger, elle s’installe au prochain démarrage. Vous pouvez aussi vérifier manuellement, installer un ZIP officiel ou choisir une version antérieure. L’application reste utilisable si le service de mise à jour est inaccessible. Voir les [notes de version complètes](../release-windows.md).
-- **Vidéos longues.** L’application traite le suivi réel de la personne dans la plage sélectionnée. Au-delà de 5 000 images, le traitement continue à titre expérimental. SAM adapte la taille de ses lots à la mémoire vidéo disponible et réessaie avec des lots plus petits en cas d’échec d’allocation. La vidéo reste visible pendant le défilement de la liste des personnes.
-- **Export.** Le rythme de lecture des VMD dans MMD et l’orientation de la pose de référence des FBX génériques ont été corrigés. Mixamo accepte un modèle de personnage et Maya AdvancedSkeleton peut utiliser l’utilitaire 30 FPS fourni. L’application mémorise le dossier du dernier export réussi.
+- **Mises à jour.** Redémarrez la v0.3.2 pour vérifier en arrière-plan si la v0.3.3 est disponible, ou utilisez le bouton de vérification en haut à droite. Après téléchargement et vérification, la mise à jour s’installe au prochain démarrage. Vos modèles, personnages, environnements, tâches et réglages sont conservés.
+- **Lots SAM adaptatifs.** L’application mesure la mémoire utilisée pendant l’inférence et ajuste chaque lot en fonction de la mémoire vidéo et de la RAM disponibles. En cas d’échec d’allocation, elle réessaie avec un lot plus petit et indique la cause si une seule image ne peut pas être traitée. L’échantillonnage des mains par SAM se règle sur 1, 2 ou 4 images et peut être utilisé avec l’affinage HaMeR.
+- **Service MCP local.** Démarrez-le depuis la barre d’outils. Un client compatible peut créer, consulter ou annuler des tâches, contrôler la lecture et le squelette des personnages, et exporter les mouvements. Correction des exports MCP après sélection automatique d’une seule personne et de l’actualisation de la progression dans l’interface Web distante. [Guide MCP](../mcp.md) · [Notes de version complètes](../release-windows.md)
 
 ## Édition de bureau pour Windows
 

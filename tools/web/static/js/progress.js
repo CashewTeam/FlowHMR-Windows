@@ -127,16 +127,21 @@ export function initProgress() {
     show(node, !!camera);
   }
 
-  function renderBatch(batch) {
+  function renderBatch(batch, status) {
     const node = $("jobSamBatch");
     if (batch) {
       setText(node, () => [
         "SAM",
         t(batch.reused ? "progress.sam_reused" : batch.requested == null ? "common.auto" : "common.manual"),
-        batch.actual == null ? t("progress.sam_unrecorded") : t("progress.sam_actual", { frames: batch.actual }),
+        (status === "done" || batch.reused) && batch.min_batch < batch.max_batch
+          ? t("progress.sam_range", { min: batch.min_batch, max: batch.max_batch })
+          : batch.actual == null ? t("progress.sam_unrecorded") : t("progress.sam_actual", { frames: batch.actual }),
         !batch.reused && batch.total_mib ? t("progress.vram_free", {
-          free: (batch.free_mib / 1024).toFixed(1), total: (batch.total_mib / 1024).toFixed(1),
+          free: (Math.min(batch.free_mib, batch.driver_free_mib ?? Infinity) / 1024).toFixed(1),
+          total: (batch.total_mib / 1024).toFixed(1),
         }) : "",
+        !batch.reused && batch.ram_free_mib != null
+          ? t("progress.ram_free", { free: (batch.ram_free_mib / 1024).toFixed(1) }) : "",
         batch.retries && !batch.reused ? t("progress.sam_retries", { count: batch.retries }) : "",
       ].filter(Boolean).join(" · "));
     }
@@ -209,7 +214,7 @@ export function initProgress() {
         ? m("progress.long_motion", { frames: job.long_motion_frames }) : "");
       show("jobLongMotion", !!job.long_motion_frames);
       renderCamera(job.camera);
-      renderBatch(job.sam_batch);
+      renderBatch(job.sam_batch, job.status);
       renderHamer(job.hamer_report);
       renderCorrection(job.correction, job.params);
       setText($("workspaceState"), () => job.status === "running" ? `${job.progress}% · ${jobMessage(job)}`

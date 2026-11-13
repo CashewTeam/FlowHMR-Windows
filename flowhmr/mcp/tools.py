@@ -5,7 +5,7 @@ from pydantic import Field, RootModel
 from mcp.server.fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 from .backend import fail, local_file, normalize_job
-from .contract import ExportOptions, JobID, Parameters, People, Policy
+from .contract import ExportOptions, JobID, Parameters, People, Policy, parameter_defaults
 from .characters import CharacterID, PosePatch
 
 
@@ -49,7 +49,7 @@ def build_tools(backend, exports):
         """Check backend, runtime, model readiness and default generation parameters."""
         info = await backend.request('GET', '/api/info')
         return Result({'backend_ready': True, 'device': info['device'], 'runtime': info['runtime'],
-                       'models_loaded': info['models_loaded'], 'defaults': info['defaults'],
+                       'models_loaded': info['models_loaded'], 'defaults': parameter_defaults(info['defaults']),
                        'model_files': info['model_files']['items']})
 
     @register(True)

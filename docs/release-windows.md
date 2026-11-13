@@ -1,22 +1,13 @@
-# FlowHMR Windows v0.3.2
+# FlowHMR Windows v0.3.3
 
-## 主要更新
+- **程序更新。** v0.3.2 用户重启后会在后台检查新版，也可点击右上角 **检查更新**。选择下载，校验通过后再重启即可安装。模型、角色库、CUDA／ROCm 环境、历史任务和设置会保留。
+- **SAM 自动批次。** 先用一帧实测，再按显存预算和系统内存余量动态增减批次。分配失败会缩批重试。系统资源连单帧都无法满足时，任务会提示缺的是显存还是系统内存。长视频的 SAM 特征分批写入，减少合并时的内存峰值。
+- **SAM 手部采样。** 支持逐帧、每 2 帧和每 4 帧。隔帧时通过插值补齐 SAM 手部特征，身体特征仍逐帧计算。建议搭配 HaMeR 手指精修使用。感谢 [@Scar1etCrystal](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/pull/2)。
+- **本机 MCP 服务。** 在桌面顶栏启动，支持可选的访问令牌和随程序启动。兼容客户端可导入视频、调整参数、操作任务、控制播放和角色骨骼，以及导出 FBX、VMD、VRMA 和 NPZ。感谢 [@CashewTeam](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/pull/5)。
+- **任务进度和导出。** 远程 Web 页面恢复自动进度刷新。修复通过 MCP 导出自动选人的单人任务时，Mixamo、MetaHuman 和 Maya AdvancedSkeleton FBX 被错误拒绝的问题。
 
-- **程序更新。** 每次启动在后台检查，发现新版本会显示版本号和更新内容。可在语言下拉框旁手动检查、从官方 ZIP 更新或选择历史版本。下载校验后在下次启动时安装，更新源不可达时仍可使用当前版本。
-- **长视频与显存。** 按所选区间内的实际人物轨迹生成，单条轨迹超过 5000 帧时继续处理并显示实验性提示。SAM 自动批次按模型上卡后的可用显存计算，分配失败会降批重试同一段素材，必要时改用 CPU 裁剪并分开处理双手。
-- **VRM 与 VRMA。** 角色库支持 VRM 0.x / 1.0，校准了预览中的头颈默认角度。可导出 VRM Animation，保留身体、手指和根骨动作。多人分别写入 VRMA 并打包，保留入场时间和相对站位。
-- **导出兼容性。** 修正 VMD 在 MMD 中的播放节奏和通用 FBX 参考 T Pose 的朝向。Mixamo 可选择角色模板，MetaHuman 按目标身体模板导出。新增 Maya AdvancedSkeleton FBX 和 30 FPS 帧率助手。导出时可以自选文件名和路径，下次会记住上次成功保存的目录。
-- **选人和桌面修复。** 选人时固定视频预览和确认区，候选列表独立滚动。修复 Windows 下载解压后部分机器无法启动、覆盖升级后角色库 404，以及 PMX、VRM、FBX 原生文件选择框报错。
+在 RTX 5090 D 上用短片实跑，验证了自动增批、SAM 缓存复用和桌面 MCP。回放显存和系统内存收紧的场景，验证了缩批、重试和单帧也无法运行时的提示。RX 7800 XT 仍待实卡验证，AMD Radeon RX 9000 系列的 ROCm 环境继续标为实验支持。
 
-## 验证范围
+首次安装请完整解压 `FlowHMR-Windows.zip`，双击 `FlowHMR/FlowHMR.exe`。已装 v0.3.2 时可直接使用应用内更新。
 
-- 固定相机任务完整生成了 6700 帧动作和预览数据。12 帧短片按 6 GB 预算调度时，SAM 自动逐帧并完成生成。短测在 32 GB 显卡上执行，实体 6–8 GB 显卡仍待验证。
-- VMD 已在 MikuMikuDance 9.26 CHS 的 30 和 60 FPS 播放设置下对照。旧任务可以直接重新导出。Maya ADV 已核对 FBX 的帧和时长，以及助手的帧率切换逻辑，实际 Maya 导入和烘焙对照仍待验证。
-
-## 安装和升级
-
-完整解压 `FlowHMR-Windows.zip`，打开 `FlowHMR/FlowHMR.exe`。首次升级到支持应用内更新的版本时，先退出旧程序，再完整解压新 ZIP 并覆盖旧安装目录中的程序文件。保留 `models`、已装的运行环境、任务数据和设置。首次安装仍在软件内下载推理环境和模型。
-
-AMD Radeon RX 9000 系列中的 `gfx1201` 型号可在 Windows 11 上试用 [ROCm 实验环境](amd-rocm.md)。
-
-[模型文件说明](../models/README.md) · [动作导出与角色预览](retarget-export.md)
+[MCP 使用说明](mcp.md) · [Windows 安装说明](windows.md) · [AMD 实验环境](amd-rocm.md)

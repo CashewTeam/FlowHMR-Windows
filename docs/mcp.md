@@ -10,6 +10,8 @@ FlowHMR 提供本机 Streamable HTTP MCP 服务。Agent 可以导入视频、调
 
 服务默认不自动启动，访问令牌默认关闭。可以在面板中开启 **自动开启 MCP** 或 **启用访问令牌**。启用令牌后，客户端需要发送 `Authorization: Bearer <令牌>`，令牌可在面板中查看和复制。端口及令牌设置需在服务停止时修改。
 
+MCP 的启停、令牌和配置由桌面窗口管理。启用令牌后，本机客户端也需要携带令牌才能连接 MCP。
+
 客户端连接配置示例（具体格式以客户端为准）：
 
 ```json
@@ -55,6 +57,8 @@ MCP 创建的任务会显示在桌面任务历史中。队列、任务进度、�
 
 `selection_policy` 默认为 `explicit`，检测到多人时等待界面或 Agent 选择，超时后任务失败；设为 `automatic` 时自动选择默认人物。`flowhmr_select_people` 使用从 0 开始的候选索引；角色和导出使用 `flowhmr_get_job` 返回的 `person_ids`。
 
+自动选择的单人结果返回 `person_ids: [0]`。已有选人记录的单人结果沿用原索引，多人结果沿用场景人物编号。
+
 ```json
 {
   "name": "flowhmr_import_video",
@@ -82,6 +86,7 @@ MCP 创建的任务会显示在桌面任务历史中。队列、任务进度、�
 | 脚掌贴地强度 | `sole_fit_strength` | 0–1 |
 | 修正用地面 | `correction_floor_m` | `null` 为自动估计；数字为手动高度，单位米 |
 | SAM 批次 | `sam_chunk_size` | `null` 为自动；正整数为手动批次大小 |
+| SAM 手部采样 | `sam_hand_stride` | 1 为逐帧，2 或 4 为隔帧采样，间隔内的手部特征由插值补齐 |
 
 `auto_frames` 和 `max_frames` 也可用于控制处理帧数。HaMeR 和接触修正需要相应运行环境和模型。MCP 参数在导入或重跑时生效；角色预览偏移可单独修改。
 

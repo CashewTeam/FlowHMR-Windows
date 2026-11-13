@@ -6,11 +6,11 @@
 
 **[Download the portable Windows edition](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest/download/FlowHMR-Windows.zip)** · [Release notes](https://github.com/xiaoerofficial021-collab/FlowHMR-Windows/releases/latest) · [FlowHMR paper](https://arxiv.org/abs/2610.03691)
 
-## What's new in v0.3.2
+## What's new in v0.3.3
 
-- **App updates.** The app checks in the background each time it starts. A new version opens a notice with its version number and release notes. If you choose to download it, the app installs it on the next launch. You can also check manually, update from an official ZIP, or select a previous version. You can keep working if the update service is unreachable. See the [full release notes](../release-windows.md).
-- **Long videos.** FlowHMR uses the actual person track within the selected range. Tracks over 5,000 frames continue as an experimental feature. SAM chooses its batch size from available VRAM and retries with smaller batches if allocation fails. The video stays visible while you scroll through the person list.
-- **Export.** This version corrects VMD playback timing in MMD and the reference pose orientation of generic FBX exports. Mixamo accepts a character template, and Maya AdvancedSkeleton can use the included 30 FPS helper. The app remembers your last successful export directory.
+- **App updates.** If you have v0.3.2, restart the app to check for v0.3.3 in the background, or click **Check for updates**. After you download the update and it passes verification, the app installs it at the next launch. Your models, characters, runtimes, jobs, and settings are preserved.
+- **Adaptive SAM batches.** SAM measures real inference memory use and adjusts each batch to fit available VRAM and system memory. It retries smaller batches on allocation failure and reports the cause when a single frame cannot run. You can now sample SAM hands every 1, 2, or 4 frames, including when using HaMeR refinement.
+- **Local MCP service.** Start it from the desktop toolbar to let a compatible client create, inspect, or cancel jobs, control playback and character bones, and export motion. Fixed MCP exports for automatically selected single-person jobs and restored automatic progress updates on remote Web pages. [MCP guide](../mcp.md) · [Full release notes](../release-windows.md)
 
 ## Windows desktop edition
 

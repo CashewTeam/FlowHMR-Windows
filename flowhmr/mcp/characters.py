@@ -144,7 +144,7 @@ def import_character(library, selections, file, name):
 
 def empty_pose(kind):
     pose = {'rotations': {}, 'rootRotation': [0, 0, 0], 'rootTranslation': [0, 0, 0],
-            'mirror': False, 'ikMode': 'fk'}
+            'mirror': False, 'ikMode': 'ik' if kind == 'pmx' else 'fk'}
     if kind in ('pmx', 'vrm'):
         pose[kind + 'BaselineVersion'] = 1
     return pose

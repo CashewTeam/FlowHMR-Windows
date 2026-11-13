@@ -197,24 +197,6 @@ def _limit_track_frames(bbox_path: str, max_frames: int | None,
     print(f"  [bbox] processing frames [{start},{end}] ({end - start + 1} frames)")
 
 
-def plan_sam_batch(device, frames, requested=None):
-    """Estimate the initial SAM batch from memory available to this worker now."""
-    device = torch.device(device)
-    info = {"requested": requested, "actual": min(frames, requested or 16), "reused": False, "retries": 0}
-    if device.type == "cuda":
-        mib = 1024 ** 2
-        free, total = torch.cuda.mem_get_info(device)
-        info.update(free_mib=free // mib, total_mib=total // mib)
-        if requested is None:
-            # Free memory is measured with SAM resident and unused allocator blocks released.
-            # Small or busy GPUs need extra room for the first body and two-hand passes.
-            constrained = total <= 9 * 1024 * mib or free < 5 * 1024 * mib
-            reserve = max((2048 if constrained else 1536) * mib, total * 22 // 100)
-            per_frame = (512 if constrained else 384) * mib
-            info["actual"] = min(frames, max(1, (free - reserve) // per_frame))
-    return info
-
-
 def forward_smpl_batch(body_model, rot6d, shapes, trans):
     B, L = trans.shape[:2]
     J = rot6d.shape[2]
@@ -1041,7 +1023,7 @@ class V2MInferenceEngine:
         """Video -> SMPL-H motion.
 
         static_camera: skip VGGT and use a fixed pose with default intrinsics.
-        sam_chunk_size: frames per SAM body pass; both hands are batched together.
+        sam_chunk_size: None adapts to available memory, or specify a manual body batch.
         sam_hand_stride: decode both SAM hand decoders on one seeded frame per
         ``sam_hand_stride``-wide interval and linearly interpolate the remaining
         hand slots; 1 decodes every frame.
@@ -1229,29 +1211,33 @@ class V2MInferenceEngine:
                 del cached_tokens
             except Exception as exc:
                 print(f"  [sam] cached features could not be loaded ({exc}), recomputing")
+        cached_batch = {}
         if feature_cached:
             cached_stride = 1
             try:
                 with open(batch_path, encoding="utf-8") as f:
-                    cached_batch = json.load(f)
-                if isinstance(cached_batch, dict):
-                    cached_stride = int(cached_batch.get("sam_hand_stride", 1))
-            except (OSError, ValueError):
+                    metadata = json.load(f)
+                if not isinstance(metadata, dict):
+                    raise ValueError("Invalid SAM cache metadata")
+                cached_batch = metadata
+                cached_stride = metadata.get("sam_hand_stride", 1)
+                if type(cached_stride) is not int or cached_stride not in SAM_HAND_STRIDES:
+                    raise ValueError("Invalid cached hand stride")
+            except FileNotFoundError:
                 pass
-            if cached_stride != sam_hand_stride:
+            except (OSError, ValueError) as error:
+                print(f"  [sam] cached batch metadata could not be read ({error}), recomputing")
+                feature_cached = False
+            if feature_cached and cached_stride != sam_hand_stride:
                 print(f"  [sam] cached features use hand stride {cached_stride}, "
                       f"recomputing for stride {sam_hand_stride}")
                 feature_cached = False
         need_hand_boxes = hamer and load_hand_boxes(hand_boxes_path, t_track) is None
         if feature_cached:
-            batch = {"requested": sam_chunk_size, "actual": min(t_track, sam_chunk_size) if sam_chunk_size else None}
-            try:
-                with open(batch_path, encoding="utf-8") as f:
-                    cached_batch = json.load(f)
-                if isinstance(cached_batch, dict) and cached_batch.get("requested") == sam_chunk_size:
-                    batch.update(cached_batch)
-            except (OSError, ValueError):
-                pass
+            batch = {"requested": sam_chunk_size, "actual": min(t_track, sam_chunk_size) if sam_chunk_size else None,
+                     "sam_hand_stride": cached_stride}
+            if cached_batch.get("requested") == sam_chunk_size:
+                batch.update(cached_batch)
             _details(sam_batch={**batch, "reused": True})
             print(f"  [sam] skip (exists): {feat_pt_path}")
         if feature_cached and not need_hand_boxes:
@@ -1307,36 +1293,47 @@ class V2MInferenceEngine:
             self._activate_stage(StageName.FEATURE_EXTRACT)
             estimator = getattr(self.sam_extractor, "estimator", None)
             sam_device = torch.device(getattr(estimator, "device", self.device))
-            if sam_chunk_size is None and sam_device.type == "cuda":
+            adaptive_batch = sam_chunk_size is None
+            if adaptive_batch and sam_device.type == "cuda":
                 with torch.cuda.device(sam_device):
                     torch.cuda.empty_cache()
-            batch = plan_sam_batch(sam_device, t_track, sam_chunk_size)
-            batch["sam_hand_stride"] = sam_hand_stride
-            if not feature_cached:
-                _details(sam_batch=batch.copy())
-            print(f"  [sam] {'auto' if sam_chunk_size is None else 'manual'} batch={batch['actual']}, "
-                  f"free={batch.get('free_mib', '?')} MiB of {batch.get('total_mib', '?')} MiB")
 
-            def _reduce_batch(size):
-                batch.update(actual=size, retries=batch["retries"] + 1)
-                if not feature_cached:
-                    _details(sam_batch=batch.copy())
-                print(f"  [sam] GPU memory retry {batch['retries']}: batch={size}", flush=True)
-
+            batch = {"requested": sam_chunk_size, "actual": None, "reused": False, "retries": 0,
+                     "sam_hand_stride": sam_hand_stride}
             sam_args = dict(
                 bbox_xyxy=bbox_full_t,
                 K_all=K_all,
                 max_frames=max_frames_needed,
                 start_frame=s,
                 progress_cb=_sam_progress,
-                frame_batch_size=batch["actual"],
-                on_oom_reduce=_reduce_batch if sam_chunk_size is None else None,
             )
-            if hasattr(self.sam_extractor, "hand_stride"):
+            if estimator is not None:
+                def _batch_progress(info):
+                    changed = (info["actual"], info["retries"]) != (batch["actual"], batch["retries"])
+                    batch.update(info)
+                    if changed:
+                        if not feature_cached:
+                            _details(sam_batch=batch.copy())
+                        print(f"  [sam] adaptive batch={batch['actual'] or batch['initial']}, "
+                              f"VRAM free={batch.get('free_mib', '?')} MiB, "
+                              f"driver headroom={batch.get('driver_free_mib', '?')} MiB, "
+                              f"RAM available={batch['ram_free_mib']} MiB", flush=True)
+
+                if adaptive_batch:
+                    sam_args.update(adaptive_batch=True, batch_cb=_batch_progress)
                 sam_args["sam_hand_stride"] = sam_hand_stride
             elif sam_hand_stride != 1:
                 print("  [sam] WARNING: this SAM backend cannot sample hands sparsely; "
                       "decoding every frame")
+            if not adaptive_batch or estimator is None:
+                batch["actual"] = batch["initial"] = min(t_track, sam_chunk_size or 16)
+                sam_args["frame_batch_size"] = batch["actual"]
+                if sam_device.type == "cuda":
+                    free, total = torch.cuda.mem_get_info(sam_device)
+                    batch.update(free_mib=free // 1024 ** 2, total_mib=total // 1024 ** 2)
+                if not feature_cached:
+                    _details(sam_batch=batch.copy())
+                print(f"  [sam] batch={batch['actual']}, requested={sam_chunk_size}", flush=True)
             if feature_cached:
                 hand_boxes = extract_hand_boxes(working_video, **sam_args)
             else:
@@ -1356,6 +1353,8 @@ class V2MInferenceEngine:
                     raise ValueError("SAM hand boxes do not match the selected track")
                 np.save(hand_boxes_path, hand_boxes)
             if not feature_cached:
+                if adaptive_batch:
+                    _details(sam_batch=batch.copy())
                 torch.save(tokens, feat_pt_path)
                 with open(batch_path, "w", encoding="utf-8") as f:
                     json.dump(batch, f)

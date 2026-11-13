@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import httpx
 from mcp.server.fastmcp.exceptions import ToolError
+from .contract import SERVICE_KEY_HEADER, single_result_person_id
 
 
 def fail(code, message, **details):
@@ -41,19 +42,24 @@ def normalize_job(job):
         job['candidates'] = [dict(index=i, **{k: c[k] for k in (
             'start', 'end', 'num_frames', 'preview_start', 'preview_end') if k in c},
             thumbnail_uri=f"flowhmr://jobs/{job['id']}/people/{i}") for i, c in enumerate(job['candidates'])]
-    job['person_ids'] = ([p['person'] for p in job['scene']['people']] if job.get('scene')
-                         else [job['selected_person']] if job.get('selected_person') is not None else [])
+    if job.get('scene'):
+        job['person_ids'] = [person['person'] for person in job['scene']['people']]
+    elif job.get('status') == 'done' and (job.get('person_count') or 1) == 1:
+        job['person_ids'] = [single_result_person_id(job)]
+    else:
+        job['person_ids'] = []
     job['available_formats'] = (['npz', 'vmd', 'vrma'] + (['fbx'] if job.get('has_fbx') else [])
                                 if job.get('status') == 'done' else [])
     return job
 
 
 class Backend:
-    def __init__(self, url):
+    def __init__(self, url, service_key=None):
         self.url = url.rstrip('/')
+        self.headers = {SERVICE_KEY_HEADER: service_key} if service_key else {}
 
     def client(self, timeout=30):
-        return httpx.AsyncClient(base_url=self.url, timeout=timeout, trust_env=False)
+        return httpx.AsyncClient(base_url=self.url, headers=self.headers, timeout=timeout, trust_env=False)
 
     async def check(self, response):
         if response.is_success:

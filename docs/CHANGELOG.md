@@ -2,6 +2,12 @@
 
 Notable changes to FlowHMR.
 
+## Windows v0.3.3
+
+- Adjust SAM batches using measured peak VRAM and available system memory. Retry smaller batches after allocation errors.
+- Add SAM hand sampling at intervals of 1, 2, or 4 frames and a local MCP service for tasks, playback, characters, and export.
+- Restore remote Web progress updates and fix FBX export for automatically selected single-person jobs through MCP.
+
 ## [2026-11-11]
 
 ### Added

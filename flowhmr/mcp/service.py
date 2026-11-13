@@ -1,6 +1,8 @@
 """Own the local MCP child process; never create another inference worker."""
 import atexit
 import asyncio
+from contextlib import suppress
+from http.client import HTTPConnection, HTTPException
 import json
 import os
 from pathlib import Path
@@ -9,9 +11,18 @@ import subprocess
 import sys
 import threading
 import time
-from urllib.error import URLError
-from urllib.request import Request, urlopen
-from .contract import TOOL_NAMES
+import psutil
+from .contract import INSTANCE_ENV, SERVICE_KEY_ENV, SERVICE_KEY_HEADER, TOOL_NAMES
+
+
+def local_request(port, method, path, *, headers=None, timeout=0.5):
+    connection = HTTPConnection('127.0.0.1', port, timeout=timeout)
+    try:
+        connection.request(method, path, headers=headers or {})
+        with connection.getresponse() as response:
+            return response.status, json.loads(response.read(4096))
+    finally:
+        connection.close()
 
 
 class MCPService:
@@ -20,6 +31,8 @@ class MCPService:
         self.directory = self.root / '.cache/mcp'
         self.process = None
         self.active_port = None
+        self.instance = None
+        self.service_key = secrets.token_urlsafe(32)
         self.startup_error = None
         self.on_change = None
         self.lock = threading.RLock()
@@ -90,53 +103,79 @@ class MCPService:
                 raise ValueError('MCP is already running. Stop it before changing settings.')
             self.startup_error = None
             auth_enabled = self._config().get('auth_enabled', False)
-            token = self._token() if auth_enabled else None
+            if auth_enabled:
+                self._token()
             self.directory.mkdir(parents=True, exist_ok=True)
             logs = self.root / 'logs'
             logs.mkdir(exist_ok=True)
+            instance = secrets.token_urlsafe(32)
             with (logs / 'mcp.log').open('a', encoding='utf-8') as log:
-                self.active_port = port
                 self.process = subprocess.Popen(
                     [sys.executable, '-m', 'flowhmr.mcp.server', '--port', str(port),
                      '--backend-url', backend_url, '--parent-pid', str(os.getpid()),
                      *(['--auth-enabled'] if auth_enabled else [])],
                     cwd=self.root, stdout=log, stderr=log,
+                    env={**os.environ, INSTANCE_ENV: instance, SERVICE_KEY_ENV: self.service_key},
                     creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+            self.active_port, self.instance = port, instance
             def watch(process):
                 process.wait()
                 if self.on_change is not None:
                     self.on_change()
             threading.Thread(target=watch, args=(self.process,), daemon=True).start()
-            deadline = time.monotonic() + 15
-            while time.monotonic() < deadline:
-                if self.process.poll() is not None:
-                    raise RuntimeError('MCP startup failed. See logs/mcp.log.')
-                try:
-                    req = Request(f'http://127.0.0.1:{port}/health',
-                                  headers={'Authorization': f'Bearer {token}'} if auth_enabled else {})
-                    with urlopen(req, timeout=0.5) as response:
-                        result = json.load(response)
-                    if result.get('pid') == self.process.pid:
+            try:
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    if self.process.poll() is not None:
+                        raise RuntimeError('MCP startup failed. See logs/mcp.log.')
+                    # Windows venv launchers have a different PID from the interpreter.
+                    if self._is_ready(port, instance):
                         self.directory.joinpath('settings.json').write_text(
                             json.dumps({**self._config(), 'port': port, 'auth_enabled': auth_enabled}), encoding='utf-8')
                         return self.snapshot()
-                except (URLError, TimeoutError, OSError):
-                    pass  # Child has not bound the socket yet; bounded readiness polling.
-                time.sleep(0.1)
-            self.stop()
-            raise RuntimeError('MCP startup timed out. See logs/mcp.log.')
+                    time.sleep(0.1)
+                raise RuntimeError('MCP startup timed out. See logs/mcp.log.')
+            except Exception:
+                self.stop()
+                raise
+
+    @staticmethod
+    def _is_ready(port, instance):
+        try:
+            status, body = local_request(port, 'GET', '/ready')
+            return status == 200 and isinstance(body, dict) and body.get('instance') == instance
+        except (HTTPException, OSError, ValueError):
+            return False
 
     def stop(self):
         with self.lock:
             if self.process is not None and self.process.poll() is None:
-                state = self.snapshot()
-                headers = {'Authorization': f"Bearer {state['token']}"} if state['auth_enabled'] else {}
-                with urlopen(Request(state['url'].removesuffix('/mcp') + '/shutdown',
-                                     data=b'', headers=headers, method='POST'), timeout=5):
-                    pass
-                self.process.wait(timeout=1205)
+                stopped = False
+                if self.active_port is not None and self._is_ready(self.active_port, self.instance):
+                    with suppress(HTTPException, OSError, ValueError):
+                        status, _ = local_request(self.active_port, 'POST', '/shutdown',
+                                                  headers={SERVICE_KEY_HEADER: self.service_key}, timeout=5)
+                        if status == 202:
+                            with suppress(subprocess.TimeoutExpired):
+                                self.process.wait(timeout=1205)
+                                stopped = True
+                if not stopped:
+                    self._terminate_process_tree()
             self.process = None
             self.active_port = None
+            self.instance = None
+
+    def _terminate_process_tree(self):
+        children = []
+        with suppress(psutil.NoSuchProcess):
+            children = psutil.Process(self.process.pid).children(recursive=True)
+        for child in reversed(children):
+            with suppress(psutil.NoSuchProcess):
+                child.terminate()
+        if self.process.poll() is None:
+            self.process.terminate()
+            self.process.wait(timeout=5)
+        psutil.wait_procs(children, timeout=2)
 
     def reset_token(self):
         with self.lock:

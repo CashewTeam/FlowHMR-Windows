@@ -2,7 +2,7 @@
 
 import argparse
 import hashlib
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 import json
 import os
 from pathlib import Path
@@ -77,6 +77,12 @@ def checksum(path):
 
 
 def copy_runtime(target, prerequisites, *, bundle_cuda=False):
+    try:
+        mcp_version = version("mcp")
+    except PackageNotFoundError:
+        mcp_version = None
+    if mcp_version != "1.28.0":
+        raise RuntimeError("Install the locked Windows requirements before staging the MCP runtime.")
     if (sys.platform != "win32" or sys.version_info[:2] != (3, 10) or struct.calcsize("P") != 8
             or version("torch") != "2.8.0+cu128" or version("torchvision") != "0.23.0+cu128"
             or version("imageio-ffmpeg") != "0.8.1"):
@@ -134,6 +140,9 @@ def copy_runtime(target, prerequisites, *, bundle_cuda=False):
     gpu_info = (f"PyTorch {version('torch')}\nTorchVision {version('torchvision')}\n" if bundle_cuda
                 else "PyTorch and TorchVision are installed on demand from the Runtime Environment page.\n")
     (target / "BUILD-INFO.txt").write_text(f"CPython {sys.version.split()[0]} x64\n" + gpu_info, encoding="ascii")
+    subprocess.run((str(target / "python.exe"), "-I", "-c",
+                    "from mcp.server.fastmcp import FastMCP; import pydantic, pywintypes"),
+                   check=True, creationflags=subprocess.CREATE_NO_WINDOW)
 
 
 def copy_dinov3(destination, source):

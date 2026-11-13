@@ -7,16 +7,16 @@ export function initMcpDialog() {
   const copy = $('mcpCopy'), token = $('mcpToken'), reveal = $('mcpReveal');
   const auth = $('mcpAuth');
   const autoStart = $('mcpAutoStart');
-  let state = null, busy = false;
-  let activityStamp = '', activityBusy = false;
+  let bridge, state = null, busy = false;
+  let activityStamp = '', activityBusy = false, activityPending = false;
 
   async function refreshActivity() {
+    if (!bridge) return;
     if (activityBusy) { activityPending = true; return; }
     activityBusy = true;
     try {
-      const response = await fetch('/api/mcp/activity', { cache: 'no-store' });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
+      const data = await bridge.mcp_activity();
+      if (!data || data.error) throw new Error(data?.error || t('connection.offline'));
       const stamp = JSON.stringify(data);
       if (stamp === activityStamp) return;
       activityStamp = stamp;
@@ -52,23 +52,27 @@ export function initMcpDialog() {
       if (activityPending) { activityPending = false; void refreshActivity(); }
     }
   }
-  let activityPending = false;
-  void refreshActivity();
+  function connect() {
+    if (bridge || !window.pywebview?.api?.mcp_settings) return;
+    bridge = window.pywebview.api;
+    show('btnMcp');
+    void refreshActivity();
+  }
+  window.addEventListener('pywebviewready', connect, { once: true });
+  connect();
   window.addEventListener('flowhmr:server-update', event => {
     if (['activity', 'exports', 'resync'].includes(event.detail.kind)) void refreshActivity();
     if (dialog.open && !busy && ['mcp_service', 'resync'].includes(event.detail.kind)) {
       request().then(update).catch(error => setText(status, error.message));
     }
   });
-  window.addEventListener('flowhmr:sync-disconnected', () =>
-    setText($('mcpActivityStatus'), m('connection.reconnecting')));
+  window.addEventListener('flowhmr:sync-disconnected', () => {
+    if (bridge) setText($('mcpActivityStatus'), m('connection.reconnecting'));
+  });
 
   async function request(body) {
-    const response = await fetch('/api/mcp', body ? {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    } : {});
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    const result = await bridge?.mcp_settings(body ?? null);
+    if (!result || result.error) throw new Error(result?.error || t('connection.offline'));
     return result;
   }
 

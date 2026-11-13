@@ -4,6 +4,7 @@ import argparse
 import ctypes
 from ctypes import wintypes
 from html import escape
+from http.client import HTTPConnection, HTTPException
 import json
 import logging
 import os
@@ -212,6 +213,39 @@ def expose_language_preference(window, port, backend):
     window.expose(get_ui_language, set_ui_language)
 
 
+def expose_mcp(window, port, backend):
+    def request(path, body=None):
+        current = urlsplit(window.get_current_url() or "")
+        if backend.closed.is_set() or (current.scheme, current.netloc) != ("http", f"127.0.0.1:{port}"):
+            return None
+        connection = HTTPConnection("127.0.0.1", port, timeout=1210 if body and body.get("action") == "stop" else 30)
+        headers = {"X-FlowHMR-Desktop-Key": backend.character_key, "Content-Type": "application/json"}
+        try:
+            if body is None:
+                connection.request("GET", path, headers=headers)
+            else:
+                connection.request("POST", path, json.dumps(body).encode("utf-8"), headers=headers)
+            with connection.getresponse() as response:
+                data = response.read()
+                if response.status != 200 and not response.getheader("Content-Type", "").startswith("application/json"):
+                    return {"error": f"HTTP {response.status}"}
+                return json.loads(data)
+        except (OSError, HTTPException, ValueError):
+            logging.exception("Could not access the desktop MCP service")
+            return None
+        finally:
+            connection.close()
+
+    def mcp_settings(body=None):
+        if body is None or isinstance(body, dict):
+            return request("/api/mcp", body)
+
+    def mcp_activity():
+        return request("/api/mcp/activity")
+
+    window.expose(mcp_settings, mcp_activity)
+
+
 def expose_updates(window, port, backend, trial_ready, choose):
     updater = DesktopUpdate(ROOT)
 
@@ -416,6 +450,7 @@ def main():
         choose_file = create_file_picker(window, port, backend)
         expose_model_pickers(window, port, backend, choose_file)
         expose_language_preference(window, port, backend)
+        expose_mcp(window, port, backend)
         expose_runtime_restart(window, port, backend)
         trial_ready = threading.Event() if os.environ.get("FLOWHMR_UPDATE_TRIAL") == "1" else None
         trial_failed = threading.Event()
