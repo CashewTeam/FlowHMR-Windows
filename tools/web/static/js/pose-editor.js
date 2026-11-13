@@ -332,7 +332,16 @@ export function initPoseEditor(onChange, onActor) {
       if (active) actorSelect.value = active.id;
       show("poseActorRow", actors.length > 1 && !!active);
       const next = active?.character ?? null;
-      if (character === next) return;
+      if (character === next) {
+        if (next) {
+          const updated = normalizePoseOffsets(next.poseOffsets);
+          if (JSON.stringify(values) !== JSON.stringify(updated)) {
+            values = updated;
+            syncAxes();
+          }
+        }
+        return;
+      }
       character = next;
       show(menu, !!next);
       if (!next) { menu.open = false; return; }

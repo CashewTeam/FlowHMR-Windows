@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Read-only evaluations. Inspect tools/list and flowhmr_get_parameter_schema;
+     do not create tasks or exports to answer these questions. -->
+<evaluation>
+  <qa_pair>
+    <question>Inspect the generation schema and its timeline metadata. A clip's first requested sample is at 2 seconds on the normalized timeline and the range must contain exactly 30 consecutive frames. What inclusive start,end pair should an Agent submit? Answer as two comma-separated integers.</question>
+    <answer>60,89</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect the parameter schema and the rerun tool description. A completed task was generated with 8 steps, and only stronger smoothing is requested. Which single key belongs in the params patch so the step count is inherited rather than replaced?</question>
+    <answer>smoothing_frames</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect the schema and the import tool's selection behavior. A local video needs automatic GPU batch sizing but the Agent must still choose the person explicitly. What JSON value must be assigned to sam_chunk_size, without changing the explicit selection policy?</question>
+    <answer>null</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect the generation schema and its application metadata. An Agent wants reproducible runs at the largest allowed random seed with a finite positive step count. What is the greatest permitted seed as a decimal integer?</question>
+    <answer>2147483647</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect the export schema and the export tool description. Two selected result people must be exported as VRM animations in one operation. What output filename extension must be used, including its leading dot?</question>
+    <answer>.zip</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect the import and rerun schemas. An Agent has a working video task and wants another result with different generation settings while retaining the original output. Which tool must it call rather than importing the video again? Answer only the tool name.</question>
+    <answer>flowhmr_rerun_job</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect cancellation and job-query tool descriptions. A cancellation request has been accepted, but computation may still be winding down. Which tool must be queried to determine the final task state? Answer only its name.</question>
+    <answer>flowhmr_get_job</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect the export tool's input schema and the receipt-query description. An export returned an operation ID and its status is queued. Which exact status, rather than acceptance of the original call, proves the output was published?</question>
+    <answer>done</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect the generation schema and the rerun description. To disable the foot-sole fitting effect on a new run without supplying the removed legacy boolean, which numeric parameter key must an Agent set to zero?</question>
+    <answer>sole_fit_strength</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect the job-query and person-selection schemas. An Agent can see thumbnail resources for the current detection candidates, and the task is waiting_user. Which input field takes the candidate indices, rather than the IDs used for final exports?</question>
+    <answer>candidate_indices</answer>
+  </qa_pair>
+</evaluation>

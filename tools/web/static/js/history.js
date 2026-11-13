@@ -7,12 +7,12 @@ const ACTIVE = new Set(["queued", "running", "waiting_user", "cancel_requested",
 const STOP = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>';
 const RERUN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 9.4h5M3 19.6v-5h5m-5 5l3-3a8.2 8.2 0 0014-3.7M4 9.9a8.2 8.2 0 0113.8-3.7L21 9.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-export function initHistory({ onOpen, onRerun, onDeleted }) {
+export function initHistory({ onOpen, onRerun, onDeleted, onUpdated }) {
   const list = $("historyList");
   const more = $("historyMore");
   const deleteSelected = $("historyDeleteSelected"), deleteAll = $("historyDeleteAll");
   const selected = new Set(), rows = new Map();
-  let current = null, busy = null, refreshVersion = 0, timer = null, hasActive = false;
+  let current = null, busy = null, refreshVersion = 0, refreshing = false, pendingRefresh = false;
   let deletable = 0, through = null, nextCursor = null, loadingMore = false;
 
   function updateActions() {
@@ -86,6 +86,7 @@ export function initHistory({ onOpen, onRerun, onDeleted }) {
     check.checked = selected.has(job.id);
     check.disabled = active || busy !== null;
     const summary = () => job.recovered ? t("history.recovered") : [
+      ...(job.source === 'mcp' ? ['MCP'] : []),
       formatRelative(job.created, now),
       ...(job.params.postprocess ? [
         t(job.params.correction_preset === "strong" ? "correction.lock_strong" : "correction.lock_normal"),
@@ -106,7 +107,6 @@ export function initHistory({ onOpen, onRerun, onDeleted }) {
 
   function applyWindow(data) {
     const { jobs, now } = data;
-    hasActive = jobs.some((job) => ACTIVE.has(job.status));
     nextCursor = data.next_cursor;
     const visible = new Set(jobs.map((job) => job.id));
     for (const id of selected) if (!visible.has(id)) selected.delete(id);
@@ -123,26 +123,24 @@ export function initHistory({ onOpen, onRerun, onDeleted }) {
       if (list.children[i] !== entry.row) list.insertBefore(entry.row, list.children[i] ?? null);
     });
     updateActions();
+    onUpdated?.(jobs);
     return jobs;
   }
 
-  function scheduleRefresh(delay = 2000) {
-    clearTimeout(timer);
-    if (hasActive && !loadingMore) timer = setTimeout(refresh, delay);
-  }
-
   async function refresh() {
-    if (loadingMore) return;
-    clearTimeout(timer);
+    if (loadingMore || refreshing) { pendingRefresh = true; return; }
+    refreshing = true;
     const version = ++refreshVersion;
     try {
       const data = await api.getJobs({ through });
       if (version !== refreshVersion) return data.jobs;
       const jobs = applyWindow(data);
-      scheduleRefresh();
       return jobs;
-    } catch {
-      if (version === refreshVersion) scheduleRefresh(3000);
+    } catch (error) {
+      setError(m('history.load_failed', { detail: error }));
+    } finally {
+      refreshing = false;
+      if (pendingRefresh && !loadingMore) { pendingRefresh = false; void refresh(); }
     }
   }
 
@@ -151,7 +149,6 @@ export function initHistory({ onOpen, onRerun, onDeleted }) {
     setError("");
     loadingMore = true;
     refreshVersion++;
-    clearTimeout(timer);
     updateActions();
     try {
       const page = await api.getJobs({ before: nextCursor });
@@ -166,11 +163,14 @@ export function initHistory({ onOpen, onRerun, onDeleted }) {
     } finally {
       loadingMore = false;
       updateActions();
-      scheduleRefresh();
+      if (pendingRefresh) { pendingRefresh = false; void refresh(); }
     }
   }
 
   more.addEventListener("click", loadMore);
+  window.addEventListener('flowhmr:server-update', event => {
+    if (['jobs', 'resync'].includes(event.detail.kind)) void refresh();
+  });
   $("historyRefresh").addEventListener("click", refresh);
   deleteSelected.addEventListener("click", async () => {
     const ids = [...selected];

@@ -986,6 +986,71 @@ export function initViewer(preview) {
   });
 
   return {
+    controlPlayback(command) {
+      if (!state.meta || state.frame < 0) return { error: 'No motion is loaded in this viewer.' };
+      if (state.jobId !== command.job_id) return { error: 'The viewer is displaying a different job.' };
+      if (command.action === 'seek') {
+        if (!Number.isInteger(command.frame) || command.frame < 0 || command.frame >= state.meta.num_frames)
+          return { error: 'Frame is outside the loaded motion.' };
+        jumpTo(command.frame);
+      } else if (command.action === 'play') {
+        if (!state.playing) {
+          resetMediaSync();
+          if (state.frame >= state.meta.num_frames - 1) setFrame(0);
+          setPlaying(true);
+        }
+      } else if (command.action === 'pause') setPlaying(false);
+      else return { error: 'Unknown playback action.' };
+      return { job_id: state.jobId, action: command.action, frame: state.frame,
+        display_frame: (state.scene ? sourceStart(state.meta) : 0) + state.frame + 1,
+        source_frame: sourceStart(state.meta) + state.frame, frame_count: state.meta.num_frames,
+        fps: state.meta.fps, playing: state.playing };
+    },
+    snapshot() {
+      if (!state.meta || state.frame < 0) return { available: false, reason: 'no_motion_loaded' };
+      return {
+        available: true, job_id: state.jobId, frame: state.frame,
+        display_frame: (state.scene ? sourceStart(state.meta) : 0) + state.frame + 1,
+        source_frame: sourceStart(state.meta) + state.frame,
+        fps: state.meta.fps, playing: state.playing, frame_count: state.meta.num_frames,
+        actors: actors.map((actor) => {
+          const frame = actorFrame(actor, state.frame);
+          const active = frame >= 0 && frame < actor.meta.num_frames;
+          const source = actor.skeleton && active ? {
+            index_space: 'SMPL-H source joint order',
+            joints: actor.skeleton.parents.map((parent, index) => ({ index, parent,
+              position: Array.from(actor.skeleton.joints.subarray(frame * actor.skeleton.stride + index * 3,
+                frame * actor.skeleton.stride + index * 3 + 3)) })),
+            coordinate_space: 'actor local', units: 'metres',
+          } : null;
+          let target = null;
+          if (actor.character && active) {
+            const { asset, mesh, rig } = actor.character;
+            // A hidden character is not normally advanced during rendering.
+            if (!mesh.visible && !(poseMenu.open && actor.skeleton?.group.visible)) rig.apply(frame);
+            const bones = asset.kind === 'pmx' ? mesh.skeleton.bones : asset.getRig(mesh).bones;
+            actor.group.updateWorldMatrix(true, true);
+            target = { kind: asset.kind, character_id: actor.character.libraryId, visible: mesh.visible,
+              index_space: asset.kind === 'pmx' ? 'PMX skeleton bone order' :
+                asset.kind === 'fbx' ? 'FBX preview rig bone order (skin order followed by ancestors)' :
+                  'VRM preview rig order (not original glTF node indices)',
+              local_transform: 'relative to actual scene parent', world_transform: 'Three.js scene world',
+              quaternion_order: 'xyzw', translation_units: 'metres in scene world',
+              bones: bones.map((bone, index) => {
+                const worldPosition = new THREE.Vector3(), worldQuaternion = new THREE.Quaternion();
+                bone.getWorldPosition(worldPosition); bone.getWorldQuaternion(worldQuaternion);
+                const parentIndex = bones.indexOf(bone.parent);
+                return { index, name: bone.name, parent_index: parentIndex < 0 ? null : parentIndex,
+                  parent_name: bone.parent?.name ?? null, local_position: bone.position.toArray(),
+                  local_quaternion: bone.quaternion.toArray(), local_scale: bone.scale.toArray(),
+                  world_position: worldPosition.toArray(), world_quaternion: worldQuaternion.toArray() };
+              }) };
+          }
+          return { actor_id: actor.id, person_id: actor.number ?? null, active,
+            frame: active ? frame : null, source_skeleton: source, character_skeleton: target };
+        }),
+      };
+    },
     openCharacter: character.open,
     getPmxActors(people) {
       const selected = new Set(people.map(String));
