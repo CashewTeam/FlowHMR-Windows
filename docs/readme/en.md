@@ -21,12 +21,14 @@
 | --- | --- |
 | OS | 64-bit Windows 10 or 11; Windows 11 recommended and required for AMD ROCm and Intel XPU. |
 | RAM | At least 16 GB. 32 GB or more recommended, especially for CPU and integrated graphics. Longer videos can need more. |
+| CPU-only mode | Intel / AMD x64. No GPU or VRAM required. 32 GB or more of system RAM recommended. |
 | VRAM (dedicated GPUs only) | Motion capture verified with 6 GB of VRAM. 8 GB or more recommended. |
 
 | Device | Runtime | Status |
 | --- | --- | --- |
 | NVIDIA GeForce RTX 50 | CUDA 12.8 | Verified |
-| NVIDIA GeForce RTX 20 / 30 / 40 | CUDA 12.1 | Experimental |
+| NVIDIA GeForce RTX 30 / 40 | CUDA 12.1 | Verified |
+| NVIDIA GeForce RTX 20 | CUDA 12.1 | Experimental |
 | NVIDIA GeForce GTX 10 | CUDA 12.1 | Experimental |
 | AMD Radeon RX 9000 / 7000 | [ROCm](../amd-rocm.md) | Verified |
 | AMD Radeon RX 5000 | [ROCm](../amd-rocm.md) | Experimental |

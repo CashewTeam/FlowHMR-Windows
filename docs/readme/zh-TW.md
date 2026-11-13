@@ -21,12 +21,14 @@
 | --- | --- | --- |
 | 系統 | 64 位元 Windows 10 / 11 | 64 位元 Windows 11（ROCm 與 Intel XPU 需要） |
 | 系統記憶體 | 最少 16 GB | 32 GB 以上，純 CPU 或內顯尤其建議；長片可能需要更多 |
+| 純 CPU 模式 | Intel / AMD x64，無需顯示卡或顯示記憶體 | 32 GB 以上系統記憶體 |
 | 顯示記憶體（僅獨立顯示卡） | 6 GB 已實測可執行 | 8 GB 以上 |
 
 | 裝置 | 執行環境 | 驗證狀態 |
 | --- | --- | --- |
 | NVIDIA GeForce RTX 50 | CUDA 12.8 | 已驗證 |
-| NVIDIA GeForce RTX 20 / 30 / 40 | CUDA 12.1 | 實驗中 |
+| NVIDIA GeForce RTX 30 / 40 | CUDA 12.1 | 已驗證 |
+| NVIDIA GeForce RTX 20 | CUDA 12.1 | 實驗中 |
 | NVIDIA GeForce GTX 10 | CUDA 12.1 | 實驗中 |
 | AMD Radeon RX 9000 / 7000 | [ROCm](../amd-rocm.md) | 已驗證 |
 | AMD Radeon RX 5000 | [ROCm](../amd-rocm.md) | 實驗中 |

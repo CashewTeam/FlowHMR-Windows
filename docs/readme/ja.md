@@ -21,12 +21,14 @@
 | --- | --- | --- |
 | OS | 64 ビット版 Windows 10 / 11 | 64 ビット版 Windows 11（ROCm と Intel XPU に必須） |
 | システムメモリ | 16 GB 以上 | 32 GB 以上。CPU のみ、または内蔵 GPU の場合は特に推奨。長い動画にはより多くのメモリが必要なことがあります。 |
+| CPU のみのモード | Intel／AMD の x64 CPU。GPU と VRAM は不要 | システムメモリ 32 GB 以上 |
 | VRAM（単体 GPU のみ） | 6 GB で動作確認済み | 8 GB 以上 |
 
 | デバイス | 実行環境 | 検証状況 |
 | --- | --- | --- |
 | NVIDIA GeForce RTX 50 | CUDA 12.8 | 検証済み |
-| NVIDIA GeForce RTX 20 / 30 / 40 | CUDA 12.1 | 試験中 |
+| NVIDIA GeForce RTX 30 / 40 | CUDA 12.1 | 検証済み |
+| NVIDIA GeForce RTX 20 | CUDA 12.1 | 試験中 |
 | NVIDIA GeForce GTX 10 | CUDA 12.1 | 試験中 |
 | AMD Radeon RX 9000 / 7000 | [ROCm](../amd-rocm.md) | 検証済み |
 | AMD Radeon RX 5000 | [ROCm](../amd-rocm.md) | 試験中 |

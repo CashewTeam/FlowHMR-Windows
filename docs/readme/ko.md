@@ -21,12 +21,14 @@
 | --- | --- | --- |
 | 운영체제 | 64비트 Windows 10 / 11 | 64비트 Windows 11(ROCm 및 Intel XPU에 필요) |
 | 시스템 메모리 | 최소 16 GB | 32 GB 이상. CPU 전용 또는 내장 GPU에 특히 권장하며 긴 동영상에는 더 필요할 수 있습니다. |
+| CPU 전용 모드 | Intel / AMD x64. GPU나 VRAM 불필요 | 시스템 메모리 32 GB 이상 |
 | VRAM(외장 GPU에만 해당) | 6 GB에서 동작 확인 | 8 GB 이상 |
 
 | 장치 | 런타임 | 검증 상태 |
 | --- | --- | --- |
 | NVIDIA GeForce RTX 50 | CUDA 12.8 | 검증 완료 |
-| NVIDIA GeForce RTX 20 / 30 / 40 | CUDA 12.1 | 실험 중 |
+| NVIDIA GeForce RTX 30 / 40 | CUDA 12.1 | 검증 완료 |
+| NVIDIA GeForce RTX 20 | CUDA 12.1 | 실험 중 |
 | NVIDIA GeForce GTX 10 | CUDA 12.1 | 실험 중 |
 | AMD Radeon RX 9000 / 7000 | [ROCm](../amd-rocm.md) | 검증 완료 |
 | AMD Radeon RX 5000 | [ROCm](../amd-rocm.md) | 실험 중 |

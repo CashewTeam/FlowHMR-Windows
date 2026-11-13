@@ -21,12 +21,14 @@
 | --- | --- | --- |
 | 系统 | 64 位 Windows 10 / 11 | 64 位 Windows 11（ROCm 和 Intel XPU 需要） |
 | 内存 | 16 GB | 32 GB 或以上 |
+| 纯 CPU 模式 | Intel / AMD x64，无需显卡或显存 | 32 GB 或以上系统内存 |
 | 独显显存（CUDA / ROCm） | 6 GB（已验证可运行） | 8 GB 或以上 |
 
 | 设备 | 运行环境 | 验证状态 |
 | --- | --- | --- |
 | NVIDIA GeForce RTX 50 系列 | CUDA 12.8 | 已验证 |
-| NVIDIA GeForce RTX 20 / 30 / 40 系列 | CUDA 12.1 | 实验中 |
+| NVIDIA GeForce RTX 30 / 40 系列 | CUDA 12.1 | 已验证 |
+| NVIDIA GeForce RTX 20 系列 | CUDA 12.1 | 实验中 |
 | NVIDIA GeForce GTX 10 系列 | CUDA 12.1 | 实验中 |
 | AMD Radeon RX 9000 / 7000 系列 | [ROCm](docs/amd-rocm.md) | 已验证 |
 | AMD Radeon RX 5000 系列 | [ROCm](docs/amd-rocm.md) | 实验中 |
